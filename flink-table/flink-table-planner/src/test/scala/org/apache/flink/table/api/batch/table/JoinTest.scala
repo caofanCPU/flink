@@ -19,11 +19,12 @@
 package org.apache.flink.table.api.batch.table
 
 import org.apache.flink.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.api.batch.table.JoinTest.Merger
-import org.apache.flink.table.api.scala._
 import org.apache.flink.table.functions.ScalarFunction
 import org.apache.flink.table.utils.TableTestBase
 import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 class JoinTest extends TableTestBase {
@@ -42,12 +43,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "y", "z")
         ),
         term("where", "=(a, z)"),
@@ -74,12 +75,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "y", "z")
         ),
         term("where", "AND(=(a, z), <(b, 2))"),
@@ -106,10 +107,10 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
-        batchTableNode(1),
+        batchTableNode(s),
         term("where", "AND(=(a, z), <(b, x))"),
         term("join", "a", "b", "x", "y", "z"),
         term("joinType", "LeftOuterJoin")
@@ -134,12 +135,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "y", "z")
         ),
         term("where", "=(a, z)"),
@@ -166,12 +167,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "x", "z")
         ),
         term("where", "AND(=(a, z), <(x, 2))"),
@@ -198,10 +199,10 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
-        batchTableNode(1),
+        batchTableNode(s),
         term("where", "AND(=(a, z), <(b, x))"),
         term("join", "a", "b", "x", "y", "z"),
         term("joinType", "RightOuterJoin")
@@ -226,12 +227,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "y", "z")
         ),
         term("where", "=(a, z)"),
@@ -258,12 +259,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(s),
           term("select", "y", "z")
         ),
         term("where", "AND(=(a, z), <(b, 2))"),
@@ -290,10 +291,10 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t),
           term("select", "a", "b")
         ),
-        batchTableNode(1),
+        batchTableNode(s),
         term("where", "AND(=(a, z), <(b, x))"),
         term("join", "a", "b", "x", "y", "z"),
         term("joinType", "FullOuterJoin")
@@ -321,12 +322,12 @@ class JoinTest extends TableTestBase {
         "DataSetJoin",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(t1),
           term("select", "b", "c")
         ),
         unaryNode(
           "DataSetCalc",
-          batchTableNode(1),
+          batchTableNode(t2),
           term("select", "e", "f")
         ),
         term("where", "=(b, e)"),

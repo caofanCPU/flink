@@ -20,12 +20,26 @@ package org.apache.flink.table.sources;
 
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.connector.source.DynamicTableSource;
 
 /** Defines an external stream table and provides read access to its data.
  *
  * @param <T> Type of the {@link DataStream} created by this {@link TableSource}.
+ *
+ * @deprecated This interface has been replaced by {@link DynamicTableSource}. The new interface produces
+ *             internal data structures and only works with the Blink planner. See FLIP-95 for more
+ *             information.
  */
+@Deprecated
 public interface StreamTableSource<T> extends TableSource<T> {
+
+	/**
+	 * Returns true if this is a bounded source, false if this is an unbounded source.
+	 * Default is unbounded for compatibility.
+	 */
+	default boolean isBounded() {
+		return false;
+	}
 
 	/**
 	 * Returns the data of the table as a {@link DataStream}.

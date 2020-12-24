@@ -19,12 +19,12 @@
 package org.apache.flink.table.types.logical;
 
 import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.ValidationException;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Logical type of a variable-length binary string (=a sequence of bytes).
@@ -33,9 +33,14 @@ import java.util.Set;
  * number of bytes. {@code n} must have a value between 1 and {@link Integer#MAX_VALUE} (both
  * inclusive). If no length is specified, {@code n} is equal to 1. {@code BYTES} is a synonym for
  * {@code VARBINARY(2147483647)}.
+ *
+ * <p>For enabling type inference of a zero-length binary string literal to a variable-length binary
+ * string, this type does also support {@code n} to be 0. However, this is not exposed through the API.
  */
 @PublicEvolving
 public final class VarBinaryType extends LogicalType {
+
+	public static final int EMPTY_LITERAL_LENGTH = 0;
 
 	public static final int MIN_LENGTH = 1;
 
@@ -47,9 +52,7 @@ public final class VarBinaryType extends LogicalType {
 
 	private static final String MAX_FORMAT = "BYTES";
 
-	private static final Set<String> INPUT_OUTPUT_CONVERSION = conversionSet(
-		byte[].class.getName(),
-		"org.apache.flink.table.dataformat.BinaryArray");
+	private static final Class<?> INPUT_OUTPUT_CONVERSION = byte[].class;
 
 	private static final Class<?> DEFAULT_CONVERSION = byte[].class;
 
@@ -75,17 +78,44 @@ public final class VarBinaryType extends LogicalType {
 		this(DEFAULT_LENGTH);
 	}
 
+	/**
+	 * Helper constructor for {@link #ofEmptyLiteral()} and {@link #copy(boolean)}.
+	 */
+	private VarBinaryType(int length, boolean isNullable) {
+		super(isNullable, LogicalTypeRoot.VARBINARY);
+		this.length = length;
+	}
+
+	/**
+	 * The SQL standard defines that character string literals are allowed to be zero-length strings
+	 * (i.e., to contain no characters) even though it is not permitted to declare a type that is zero.
+	 * For consistent behavior, the same logic applies to binary strings. This has also implications
+	 * on variable-length binary strings during type inference because any fixed-length binary string
+	 * should be convertible to a variable-length one.
+	 *
+	 * <p>This method enables this special kind of binary string.
+	 *
+	 * <p>Zero-length binary strings have no serializable string representation.
+	 */
+	public static VarBinaryType ofEmptyLiteral() {
+		return new VarBinaryType(EMPTY_LITERAL_LENGTH, false);
+	}
+
 	public int getLength() {
 		return length;
 	}
 
 	@Override
 	public LogicalType copy(boolean isNullable) {
-		return new VarBinaryType(isNullable, length);
+		return new VarBinaryType(length, isNullable);
 	}
 
 	@Override
 	public String asSerializableString() {
+		if (length == EMPTY_LITERAL_LENGTH) {
+			throw new TableException(
+				"Zero-length binary strings have no serializable string representation.");
+		}
 		return withNullability(FORMAT, length);
 	}
 
@@ -99,12 +129,12 @@ public final class VarBinaryType extends LogicalType {
 
 	@Override
 	public boolean supportsInputConversion(Class<?> clazz) {
-		return INPUT_OUTPUT_CONVERSION.contains(clazz.getName());
+		return INPUT_OUTPUT_CONVERSION == clazz;
 	}
 
 	@Override
 	public boolean supportsOutputConversion(Class<?> clazz) {
-		return INPUT_OUTPUT_CONVERSION.contains(clazz.getName());
+		return INPUT_OUTPUT_CONVERSION == clazz;
 	}
 
 	@Override

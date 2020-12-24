@@ -19,16 +19,19 @@
 package org.apache.flink.runtime.concurrent;
 
 import org.apache.flink.api.common.time.Time;
+import org.apache.flink.core.testutils.FlinkMatchers;
 import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
+import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.TestLogger;
 
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -48,6 +51,7 @@ import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.arrayWithSize;
 import static org.hamcrest.Matchers.emptyArray;
@@ -55,6 +59,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -93,7 +98,7 @@ public class FutureUtilsTest extends TestLogger {
 	 * Tests that a retry future is failed after all retries have been consumed.
 	 */
 	@Test(expected = FutureUtils.RetryException.class)
-	public void testRetryFailure() throws Throwable {
+	public void testRetryFailureFixedRetries() throws Throwable {
 		final int retries = 3;
 
 		CompletableFuture<?> retryFuture = FutureUtils.retry(
@@ -158,10 +163,43 @@ public class FutureUtilsTest extends TestLogger {
 	}
 
 	/**
+	 * Test that {@link FutureUtils#retry} should stop at non-retryable exception.
+	 */
+	@Test
+	public void testStopAtNonRetryableException() {
+		final int retries = 10;
+		final int notRetry = 3;
+		final AtomicInteger atomicInteger = new AtomicInteger(0);
+		final FlinkRuntimeException nonRetryableException = new FlinkRuntimeException("Non-retryable exception");
+		CompletableFuture<Boolean> retryFuture = FutureUtils.retry(
+			() -> CompletableFuture.supplyAsync(
+				() -> {
+					if (atomicInteger.incrementAndGet() == notRetry) {
+						// throw non-retryable exception
+						throw new CompletionException(nonRetryableException);
+					} else {
+						throw new CompletionException(new FlinkException("Test exception"));
+					}
+				},
+				TestingUtils.defaultExecutor()),
+			retries,
+			throwable -> ExceptionUtils.findThrowable(throwable, FlinkException.class).isPresent(),
+			TestingUtils.defaultExecutor());
+
+		try {
+			retryFuture.get();
+			fail("Exception should be thrown.");
+		} catch (Exception ex) {
+			assertThat(ex, FlinkMatchers.containsCause(nonRetryableException));
+		}
+		assertThat(atomicInteger.get(), is(notRetry));
+	}
+
+	/**
 	 * Tests that retry with delay fails after having exceeded all retries.
 	 */
 	@Test(expected = FutureUtils.RetryException.class)
-	public void testRetryWithDelayFailure() throws Throwable {
+	public void testRetryWithDelayFixedArgsFailure() throws Throwable {
 		CompletableFuture<?> retryFuture = FutureUtils.retryWithDelay(
 			() -> FutureUtils.completedExceptionally(new FlinkException("Test exception")),
 			3,
@@ -176,10 +214,27 @@ public class FutureUtilsTest extends TestLogger {
 	}
 
 	/**
+	 * Tests that retry with delay fails after having exceeded all retries.
+	 */
+	@Test(expected = FutureUtils.RetryException.class)
+	public void testRetryWithDelayRetryStrategyFailure() throws Throwable {
+		CompletableFuture<?> retryFuture = FutureUtils.retryWithDelay(
+				() -> FutureUtils.completedExceptionally(new FlinkException("Test exception")),
+				new FixedRetryStrategy(3, Duration.ofMillis(1L)),
+				TestingUtils.defaultScheduledExecutor());
+
+		try {
+			retryFuture.get(TestingUtils.TIMEOUT().toMilliseconds(), TimeUnit.MILLISECONDS);
+		} catch (ExecutionException ee) {
+			throw ExceptionUtils.stripExecutionException(ee);
+		}
+	}
+
+	/**
 	 * Tests that the delay is respected between subsequent retries of a retry future with retry delay.
 	 */
 	@Test
-	public void testRetryWithDelay() throws Exception {
+	public void testRetryWithDelayFixedArgs() throws Exception {
 		final int retries = 4;
 		final Time delay = Time.milliseconds(5L);
 		final AtomicInteger countDown = new AtomicInteger(retries);
@@ -203,7 +258,37 @@ public class FutureUtilsTest extends TestLogger {
 		long completionTime = System.currentTimeMillis() - start;
 
 		assertTrue(result);
-		assertTrue("The completion time should be at least rertries times delay between retries.", completionTime >= retries * delay.toMilliseconds());
+		assertTrue("The completion time should be at least retries times delay between retries.", completionTime >= retries * delay.toMilliseconds());
+	}
+
+	/**
+	 * Tests that the delay is respected between subsequent retries of a retry future with retry delay.
+	 */
+	@Test
+	public void testRetryWithDelayRetryStrategy() throws Exception {
+		final int retries = 4;
+		final Time delay = Time.milliseconds(5L);
+		final AtomicInteger countDown = new AtomicInteger(retries);
+
+		long start = System.currentTimeMillis();
+
+		CompletableFuture<Boolean> retryFuture = FutureUtils.retryWithDelay(
+				() -> {
+					if (countDown.getAndDecrement() == 0) {
+						return CompletableFuture.completedFuture(true);
+					} else {
+						return FutureUtils.completedExceptionally(new FlinkException("Test exception."));
+					}
+				},
+				new ExponentialBackoffRetryStrategy(retries, Duration.ofMillis(2L), Duration.ofMillis(5L)),
+				TestingUtils.defaultScheduledExecutor());
+
+		Boolean result = retryFuture.get();
+
+		long completionTime = System.currentTimeMillis() - start;
+
+		assertTrue(result);
+		assertTrue("The completion time should be at least retries times delay between retries.", completionTime >= (2 + 4 + 5 + 5));
 	}
 
 	/**
@@ -233,6 +318,65 @@ public class FutureUtilsTest extends TestLogger {
 
 		assertTrue(retryFuture.isCancelled());
 		assertTrue(scheduledFuture.isCancelled());
+	}
+
+	/**
+	 * Tests that the operation could be scheduled with expected delay.
+	 */
+	@Test
+	public void testScheduleWithDelay() throws Exception {
+		final ManuallyTriggeredScheduledExecutor scheduledExecutor = new ManuallyTriggeredScheduledExecutor();
+
+		final int expectedResult = 42;
+		CompletableFuture<Integer> completableFuture = FutureUtils.scheduleWithDelay(
+			() -> expectedResult,
+			Time.milliseconds(0),
+			scheduledExecutor);
+
+		scheduledExecutor.triggerScheduledTasks();
+		final int actualResult = completableFuture.get();
+
+		assertEquals(expectedResult, actualResult);
+	}
+
+	/**
+	 * Tests that a scheduled task is canceled if the scheduled future is being cancelled.
+	 */
+	@Test
+	public void testScheduleWithDelayCancellation() {
+		final ManuallyTriggeredScheduledExecutor scheduledExecutor = new ManuallyTriggeredScheduledExecutor();
+
+		final Runnable noOpRunnable = () -> {};
+		CompletableFuture<Void> completableFuture = FutureUtils.scheduleWithDelay(
+			noOpRunnable,
+			TestingUtils.infiniteTime(),
+			scheduledExecutor);
+
+		final ScheduledFuture<?> scheduledFuture = scheduledExecutor
+			.getScheduledTasks()
+			.iterator()
+			.next();
+
+		completableFuture.cancel(false);
+
+		assertTrue(completableFuture.isCancelled());
+		assertTrue(scheduledFuture.isCancelled());
+	}
+
+	/**
+	 * Tests that the operation is never scheduled if the delay is virtually infinite.
+	 */
+	@Test
+	public void testScheduleWithInfiniteDelayNeverSchedulesOperation() {
+		final Runnable noOpRunnable = () -> {};
+		final CompletableFuture<Void> completableFuture = FutureUtils.scheduleWithDelay(
+			noOpRunnable,
+			TestingUtils.infiniteTime(),
+			TestingUtils.defaultScheduledExecutor());
+
+		assertFalse(completableFuture.isDone());
+
+		completableFuture.cancel(false);
 	}
 
 	/**
@@ -705,5 +849,90 @@ public class FutureUtilsTest extends TestLogger {
 		private boolean hasBeenCalled() {
 			return exception != null;
 		}
+	}
+
+	@Test
+	public void testForwardNormal() throws Exception {
+		final CompletableFuture<String> source = new CompletableFuture<>();
+		final CompletableFuture<String> target = new CompletableFuture<>();
+
+		FutureUtils.forward(source, target);
+
+		assertThat(target.isDone(), is(source.isDone()));
+
+		source.complete("foobar");
+
+		assertThat(target.isDone(), is(source.isDone()));
+		assertThat(target.get(), is(equalTo(source.get())));
+	}
+
+	@Test
+	public void testForwardExceptionally() {
+		final CompletableFuture<String> source = new CompletableFuture<>();
+		final CompletableFuture<String> target = new CompletableFuture<>();
+
+		FutureUtils.forward(source, target);
+
+		assertThat(target.isDone(), is(source.isDone()));
+
+		source.completeExceptionally(new FlinkException("foobar"));
+
+		assertThat(target.isDone(), is(source.isDone()));
+
+		Throwable targetException = getThrowable(target);
+		Throwable actualException = getThrowable(source);
+
+		assertThat(targetException, is(equalTo(actualException)));
+	}
+
+	@Test
+	public void testForwardAsync() throws Exception {
+		final CompletableFuture<String> source = new CompletableFuture<>();
+		final CompletableFuture<String> target = new CompletableFuture<>();
+		final ManuallyTriggeredScheduledExecutor executor = new ManuallyTriggeredScheduledExecutor();
+
+		FutureUtils.forwardAsync(source, target, executor);
+
+		source.complete("foobar");
+
+		assertThat(target.isDone(), is(false));
+
+		// execute the forward action
+		executor.triggerAll();
+
+		assertThat(target.get(), is(equalTo(source.get())));
+	}
+
+	@Test
+	public void testGetWithoutException() {
+		final CompletableFuture<Integer> completableFuture = new CompletableFuture<>();
+		completableFuture.complete(1);
+
+		assertEquals(new Integer(1), FutureUtils.getWithoutException(completableFuture));
+	}
+
+	@Test
+	public void testGetWithoutExceptionWithAnException() {
+		final CompletableFuture<Integer> completableFuture = new CompletableFuture<>();
+		completableFuture.completeExceptionally(new RuntimeException("expected"));
+
+		assertNull(FutureUtils.getWithoutException(completableFuture));
+	}
+
+	@Test
+	public void testGetWithoutExceptionWithoutFinishing() {
+		final CompletableFuture<Integer> completableFuture = new CompletableFuture<>();
+
+		assertNull(FutureUtils.getWithoutException(completableFuture));
+	}
+
+	private static Throwable getThrowable(CompletableFuture<?> completableFuture) {
+		try {
+			completableFuture.join();
+		} catch (CompletionException e) {
+			return e.getCause();
+		}
+
+		throw new AssertionError("Future has not been completed exceptionally.");
 	}
 }

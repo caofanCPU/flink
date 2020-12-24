@@ -16,29 +16,36 @@
 # limitations under the License.
 ################################################################################
 
-import os
-
-from pyflink.table.types import DataTypes
 from pyflink.testing.test_case_utils import PyFlinkBatchTableTestCase
 
 
 class BatchTableSortTests(PyFlinkBatchTableTestCase):
 
     def test_order_by_offset_fetch(self):
-        source_path = os.path.join(self.tempdir + '/streaming.csv')
-        field_names = ["a", "b"]
-        field_types = [DataTypes.INT, DataTypes.STRING]
-        data = [(1, "Hello"), (2, "Hello"), (3, "Flink"), (4, "Python")]
-        csv_source = self.prepare_csv_source(source_path, data, field_types, field_names)
-        t_env = self.t_env
-        t_env.register_table_source("Source", csv_source)
-        source = t_env.scan("Source")
+        t = self.t_env.from_elements([(1, "Hello")], ["a", "b"])
+        result = t.order_by(t.a.desc).offset(2).fetch(2)
 
-        result = source.order_by("a.desc").offset(2).fetch(2).select("a, b")
-        actual = self.collect(result)
+        query_operation = result._j_table.getQueryOperation()
+        self.assertEqual(2, query_operation.getOffset())
+        self.assertEqual(2, query_operation.getFetch())
+        self.assertEqual('[desc(a)]',
+                         query_operation.getOrder().toString())
 
-        expected = ['2,Hello', '1,Hello']
-        self.assert_equals(actual, expected)
+    def test_limit(self):
+        t = self.t_env.from_elements([(1, "Hello")], ["a", "b"])
+        result = t.limit(1)
+
+        query_operation = result._j_table.getQueryOperation()
+        self.assertEqual(0, query_operation.getOffset())
+        self.assertEqual(1, query_operation.getFetch())
+
+    def test_limit_with_offset(self):
+        t = self.t_env.from_elements([(1, "Hello")], ["a", "b"])
+        result = t.limit(1, 2)
+
+        query_operation = result._j_table.getQueryOperation()
+        self.assertEqual(2, query_operation.getOffset())
+        self.assertEqual(1, query_operation.getFetch())
 
 
 if __name__ == '__main__':

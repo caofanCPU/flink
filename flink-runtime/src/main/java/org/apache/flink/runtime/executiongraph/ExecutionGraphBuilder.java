@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.executiongraph;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.configuration.CheckpointingOptions;
@@ -36,13 +37,12 @@ import org.apache.flink.runtime.checkpoint.MasterTriggerRestoreHook;
 import org.apache.flink.runtime.checkpoint.hooks.MasterHooks;
 import org.apache.flink.runtime.client.JobExecutionException;
 import org.apache.flink.runtime.client.JobSubmissionException;
-import org.apache.flink.runtime.executiongraph.failover.FailoverStrategy;
-import org.apache.flink.runtime.executiongraph.failover.FailoverStrategyLoader;
+import org.apache.flink.runtime.executiongraph.failover.flip1.partitionrelease.PartitionReleaseStrategy;
+import org.apache.flink.runtime.executiongraph.failover.flip1.partitionrelease.PartitionReleaseStrategyFactoryLoader;
 import org.apache.flink.runtime.executiongraph.metrics.DownTimeGauge;
-import org.apache.flink.runtime.executiongraph.metrics.NumberOfFullRestartsGauge;
 import org.apache.flink.runtime.executiongraph.metrics.RestartTimeGauge;
 import org.apache.flink.runtime.executiongraph.metrics.UpTimeGauge;
-import org.apache.flink.runtime.executiongraph.restart.RestartStrategy;
+import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
@@ -50,6 +50,7 @@ import org.apache.flink.runtime.jobgraph.jsonplan.JsonPlanGenerator;
 import org.apache.flink.runtime.jobgraph.tasks.CheckpointCoordinatorConfiguration;
 import org.apache.flink.runtime.jobgraph.tasks.JobCheckpointingSettings;
 import org.apache.flink.runtime.jobmaster.slotpool.SlotProvider;
+import org.apache.flink.runtime.shuffle.ShuffleMaster;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.StateBackendLoader;
 import org.apache.flink.util.DynamicCodeLoadingException;
@@ -78,6 +79,7 @@ public class ExecutionGraphBuilder {
 	 * If a prior execution graph exists, the JobGraph will be attached. If no prior execution
 	 * graph exists, then the JobGraph will become attach to a new empty execution graph.
 	 */
+	@VisibleForTesting
 	public static ExecutionGraph buildGraph(
 			@Nullable ExecutionGraph prior,
 			JobGraph jobGraph,
@@ -88,20 +90,59 @@ public class ExecutionGraphBuilder {
 			ClassLoader classLoader,
 			CheckpointRecoveryFactory recoveryFactory,
 			Time rpcTimeout,
-			RestartStrategy restartStrategy,
 			MetricGroup metrics,
 			BlobWriter blobWriter,
 			Time allocationTimeout,
-			Logger log)
-		throws JobExecutionException, JobException {
+			Logger log,
+			ShuffleMaster<?> shuffleMaster,
+			JobMasterPartitionTracker partitionTracker,
+			long initializationTimestamp) throws JobExecutionException, JobException {
+
+		return buildGraph(
+			prior,
+			jobGraph,
+			jobManagerConfig,
+			futureExecutor,
+			ioExecutor,
+			slotProvider,
+			classLoader,
+			recoveryFactory,
+			rpcTimeout,
+			metrics,
+			blobWriter,
+			allocationTimeout,
+			log,
+			shuffleMaster,
+			partitionTracker,
+			NoOpExecutionDeploymentListener.get(),
+			(execution, newState) -> {},
+			initializationTimestamp);
+	}
+
+	public static ExecutionGraph buildGraph(
+		@Nullable ExecutionGraph prior,
+		JobGraph jobGraph,
+		Configuration jobManagerConfig,
+		ScheduledExecutorService futureExecutor,
+		Executor ioExecutor,
+		SlotProvider slotProvider,
+		ClassLoader classLoader,
+		CheckpointRecoveryFactory recoveryFactory,
+		Time rpcTimeout,
+		MetricGroup metrics,
+		BlobWriter blobWriter,
+		Time allocationTimeout,
+		Logger log,
+		ShuffleMaster<?> shuffleMaster,
+		JobMasterPartitionTracker partitionTracker,
+		ExecutionDeploymentListener executionDeploymentListener,
+		ExecutionStateUpdateListener executionStateUpdateListener,
+		long initializationTimestamp) throws JobExecutionException, JobException {
 
 		checkNotNull(jobGraph, "job graph cannot be null");
 
 		final String jobName = jobGraph.getName();
 		final JobID jobId = jobGraph.getJobID();
-
-		final FailoverStrategy.Factory failoverStrategy =
-				FailoverStrategyLoader.loadFailoverStrategy(jobManagerConfig, log);
 
 		final JobInformation jobInformation = new JobInformation(
 			jobId,
@@ -114,6 +155,9 @@ public class ExecutionGraphBuilder {
 		final int maxPriorAttemptsHistoryLength =
 				jobManagerConfig.getInteger(JobManagerOptions.MAX_ATTEMPTS_HISTORY_SIZE);
 
+		final PartitionReleaseStrategy.Factory partitionReleaseStrategyFactory =
+			PartitionReleaseStrategyFactoryLoader.loadPartitionReleaseStrategyFactory(jobManagerConfig);
+
 		// create a new execution graph, if none exists so far
 		final ExecutionGraph executionGraph;
 		try {
@@ -123,21 +167,23 @@ public class ExecutionGraphBuilder {
 					futureExecutor,
 					ioExecutor,
 					rpcTimeout,
-					restartStrategy,
 					maxPriorAttemptsHistoryLength,
-					failoverStrategy,
 					slotProvider,
 					classLoader,
 					blobWriter,
-					allocationTimeout);
+					allocationTimeout,
+					partitionReleaseStrategyFactory,
+					shuffleMaster,
+					partitionTracker,
+					jobGraph.getScheduleMode(),
+					executionDeploymentListener,
+					executionStateUpdateListener,
+					initializationTimestamp);
 		} catch (IOException e) {
 			throw new JobException("Could not create the ExecutionGraph.", e);
 		}
 
 		// set the basic properties
-
-		executionGraph.setScheduleMode(jobGraph.getScheduleMode());
-		executionGraph.setQueuedSchedulingAllowed(jobGraph.getAllowQueuedScheduling());
 
 		try {
 			executionGraph.setJsonPlan(JsonPlanGenerator.generatePlan(jobGraph));
@@ -289,11 +335,7 @@ public class ExecutionGraphBuilder {
 			final CheckpointCoordinatorConfiguration chkConfig = snapshotSettings.getCheckpointCoordinatorConfiguration();
 
 			executionGraph.enableCheckpointing(
-				chkConfig.getCheckpointInterval(),
-				chkConfig.getCheckpointTimeout(),
-				chkConfig.getMinPauseBetweenCheckpoints(),
-				chkConfig.getMaxConcurrentCheckpoints(),
-				chkConfig.getCheckpointRetentionPolicy(),
+				chkConfig,
 				triggerVertices,
 				ackVertices,
 				confirmVertices,
@@ -301,8 +343,7 @@ public class ExecutionGraphBuilder {
 				checkpointIdCounter,
 				completedCheckpoints,
 				rootBackend,
-				checkpointStatsTracker,
-				chkConfig.isPreferCheckpointForRecovery());
+				checkpointStatsTracker);
 		}
 
 		// create all the metrics for the Execution Graph
@@ -310,9 +351,6 @@ public class ExecutionGraphBuilder {
 		metrics.gauge(RestartTimeGauge.METRIC_NAME, new RestartTimeGauge(executionGraph));
 		metrics.gauge(DownTimeGauge.METRIC_NAME, new DownTimeGauge(executionGraph));
 		metrics.gauge(UpTimeGauge.METRIC_NAME, new UpTimeGauge(executionGraph));
-		metrics.gauge(NumberOfFullRestartsGauge.METRIC_NAME, new NumberOfFullRestartsGauge(executionGraph));
-
-		executionGraph.getFailoverStrategy().registerMetrics(metrics);
 
 		return executionGraph;
 	}

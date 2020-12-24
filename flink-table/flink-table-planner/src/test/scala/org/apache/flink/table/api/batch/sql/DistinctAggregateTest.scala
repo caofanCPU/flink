@@ -19,9 +19,10 @@
 package org.apache.flink.table.api.batch.sql
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.utils.TableTestBase
 import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 class DistinctAggregateTest extends TableTestBase {
@@ -29,7 +30,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testSingleDistinctAggregate(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT COUNT(DISTINCT a) FROM MyTable"
 
@@ -39,7 +40,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetDistinct",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a")
         ),
         term("distinct", "a")
@@ -53,7 +54,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testMultiDistinctAggregateOnSameColumn(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT COUNT(DISTINCT a), SUM(DISTINCT a), MAX(DISTINCT a) FROM MyTable"
 
@@ -63,7 +64,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetDistinct",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a")
         ),
         term("distinct", "a")
@@ -77,7 +78,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testSingleDistinctAggregateAndOneOrMultiNonDistinctAggregate(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     // case 0x00: DISTINCT on COUNT and Non-DISTINCT on others
     val sqlQuery0 = "SELECT COUNT(DISTINCT a), SUM(b) FROM MyTable"
@@ -88,7 +89,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetAggregate",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a", "b")
         ),
         term("groupBy", "a"),
@@ -108,7 +109,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetAggregate",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a", "b")
         ),
         term("groupBy", "b"),
@@ -123,7 +124,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testMultiDistinctAggregateOnDifferentColumn(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT COUNT(DISTINCT a), SUM(DISTINCT b) FROM MyTable"
 
@@ -135,7 +136,7 @@ class DistinctAggregateTest extends TableTestBase {
           "DataSetDistinct",
           unaryNode(
             "DataSetCalc",
-            batchTableNode(0),
+            batchTableNode(table),
             term("select", "a")
           ),
           term("distinct", "a")
@@ -148,7 +149,7 @@ class DistinctAggregateTest extends TableTestBase {
           "DataSetDistinct",
           unaryNode(
             "DataSetCalc",
-            batchTableNode(0),
+            batchTableNode(table),
             term("select", "b")
           ),
           term("distinct", "b")
@@ -166,7 +167,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testMultiDistinctAndNonDistinctAggregateOnDifferentColumn(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT COUNT(DISTINCT a), SUM(DISTINCT b), COUNT(c) FROM MyTable"
 
@@ -180,7 +181,7 @@ class DistinctAggregateTest extends TableTestBase {
             "DataSetAggregate",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "c")
             ),
             term("select", "COUNT(c) AS EXPR$2")
@@ -191,7 +192,7 @@ class DistinctAggregateTest extends TableTestBase {
               "DataSetDistinct",
               unaryNode(
                 "DataSetCalc",
-                batchTableNode(0),
+                batchTableNode(table),
                 term("select", "a")
               ),
               term("distinct", "a")
@@ -208,7 +209,7 @@ class DistinctAggregateTest extends TableTestBase {
             "DataSetDistinct",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "b")
             ),
             term("distinct", "b")
@@ -228,7 +229,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testSingleDistinctAggregateWithGrouping(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT a, COUNT(a), SUM(DISTINCT b) FROM MyTable GROUP BY a"
 
@@ -238,7 +239,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetAggregate",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a", "b")
         ),
         term("groupBy", "a", "b"),
@@ -254,7 +255,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testSingleDistinctAggregateWithGroupingAndCountStar(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT a, COUNT(*), SUM(DISTINCT b) FROM MyTable GROUP BY a"
 
@@ -264,7 +265,7 @@ class DistinctAggregateTest extends TableTestBase {
         "DataSetAggregate",
         unaryNode(
           "DataSetCalc",
-          batchTableNode(0),
+          batchTableNode(table),
           term("select", "a", "b")
         ),
         term("groupBy", "a", "b"),
@@ -280,7 +281,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testTwoDistinctAggregateWithGroupingAndCountStar(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT a, COUNT(*), SUM(DISTINCT b), COUNT(DISTINCT b) FROM MyTable GROUP BY a"
 
@@ -292,7 +293,7 @@ class DistinctAggregateTest extends TableTestBase {
           "DataSetAggregate",
           unaryNode(
             "DataSetCalc",
-            batchTableNode(0),
+            batchTableNode(table),
             term("select", "a")
           ),
           term("groupBy", "a"),
@@ -304,7 +305,7 @@ class DistinctAggregateTest extends TableTestBase {
             "DataSetDistinct",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "a", "b")
             ),
             term("distinct", "a, b")
@@ -325,7 +326,7 @@ class DistinctAggregateTest extends TableTestBase {
   @Test
   def testTwoDifferentDistinctAggregateWithGroupingAndCountStar(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
 
     val sqlQuery = "SELECT a, COUNT(*), SUM(DISTINCT b), COUNT(DISTINCT c) FROM MyTable GROUP BY a"
 
@@ -341,7 +342,7 @@ class DistinctAggregateTest extends TableTestBase {
               "DataSetAggregate",
               unaryNode(
                 "DataSetCalc",
-                batchTableNode(0),
+                batchTableNode(table),
                 term("select", "a")
               ),
               term("groupBy", "a"),
@@ -353,7 +354,7 @@ class DistinctAggregateTest extends TableTestBase {
                 "DataSetDistinct",
                 unaryNode(
                   "DataSetCalc",
-                  batchTableNode(0),
+                  batchTableNode(table),
                   term("select", "a", "b")
                 ),
                 term("distinct", "a, b")
@@ -373,7 +374,7 @@ class DistinctAggregateTest extends TableTestBase {
             "DataSetDistinct",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "a", "c")
             ),
             term("distinct", "a, c")

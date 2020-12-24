@@ -19,6 +19,7 @@ package org.apache.flink.streaming.connectors.kinesis;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.state.ListState;
@@ -45,6 +46,8 @@ import org.apache.flink.streaming.connectors.kinesis.model.StreamShardMetadata;
 import org.apache.flink.streaming.connectors.kinesis.serialization.KinesisDeserializationSchema;
 import org.apache.flink.streaming.connectors.kinesis.serialization.KinesisDeserializationSchemaWrapper;
 import org.apache.flink.streaming.connectors.kinesis.util.KinesisConfigUtil;
+import org.apache.flink.streaming.connectors.kinesis.util.StreamConsumerRegistrarUtil;
+import org.apache.flink.streaming.connectors.kinesis.util.WatermarkTracker;
 import org.apache.flink.util.InstantiationUtil;
 
 import org.slf4j.Logger;
@@ -126,6 +129,7 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 	private KinesisShardAssigner shardAssigner = KinesisDataFetcher.DEFAULT_SHARD_ASSIGNER;
 
 	private AssignerWithPeriodicWatermarks<T> periodicWatermarkAssigner;
+	private WatermarkTracker watermarkTracker;
 
 	// ------------------------------------------------------------------------
 	//  Runtime state
@@ -208,7 +212,7 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 		this.configProps = checkNotNull(configProps, "configProps can not be null");
 
 		// check the configuration properties for any conflicting settings
-		KinesisConfigUtil.validateConsumerConfiguration(this.configProps);
+		KinesisConfigUtil.validateConsumerConfiguration(this.configProps, streams);
 
 		checkNotNull(deserializer, "deserializer can not be null");
 		checkArgument(
@@ -216,6 +220,8 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 			"The provided deserialization schema is not serializable: " + deserializer.getClass().getName() + ". " +
 				"Please check that it does not contain references to non-serializable instances.");
 		this.deserializer = deserializer;
+
+		StreamConsumerRegistrarUtil.eagerlyRegisterStreamConsumers(configProps, streams);
 
 		if (LOG.isInfoEnabled()) {
 			StringBuilder sb = new StringBuilder();
@@ -236,7 +242,7 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 	 */
 	public void setShardAssigner(KinesisShardAssigner shardAssigner) {
 		this.shardAssigner = checkNotNull(shardAssigner, "function can not be null");
-		ClosureCleaner.clean(shardAssigner, true);
+		ClosureCleaner.clean(shardAssigner, ExecutionConfig.ClosureCleanerLevel.RECURSIVE, true);
 	}
 
 	public AssignerWithPeriodicWatermarks<T> getPeriodicWatermarkAssigner() {
@@ -251,7 +257,21 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 	public void setPeriodicWatermarkAssigner(
 		AssignerWithPeriodicWatermarks<T> periodicWatermarkAssigner) {
 		this.periodicWatermarkAssigner = periodicWatermarkAssigner;
-		ClosureCleaner.clean(this.periodicWatermarkAssigner, true);
+		ClosureCleaner.clean(this.periodicWatermarkAssigner, ExecutionConfig.ClosureCleanerLevel.RECURSIVE, true);
+	}
+
+	public WatermarkTracker getWatermarkTracker() {
+		return this.watermarkTracker;
+	}
+
+	/**
+	 * Set the global watermark tracker. When set, it will be used by the fetcher
+	 * to align the shard consumers by event time.
+	 * @param watermarkTracker
+	 */
+	public void setWatermarkTracker(WatermarkTracker watermarkTracker) {
+		this.watermarkTracker = watermarkTracker;
+		ClosureCleaner.clean(this.watermarkTracker, ExecutionConfig.ClosureCleanerLevel.RECURSIVE, true);
 	}
 
 	// ------------------------------------------------------------------------
@@ -448,7 +468,7 @@ public class FlinkKinesisConsumer<T> extends RichParallelSourceFunction<T> imple
 			Properties configProps,
 			KinesisDeserializationSchema<T> deserializationSchema) {
 
-		return new KinesisDataFetcher<>(streams, sourceContext, runtimeContext, configProps, deserializationSchema, shardAssigner, periodicWatermarkAssigner);
+		return new KinesisDataFetcher<>(streams, sourceContext, runtimeContext, configProps, deserializationSchema, shardAssigner, periodicWatermarkAssigner, watermarkTracker);
 	}
 
 	@VisibleForTesting

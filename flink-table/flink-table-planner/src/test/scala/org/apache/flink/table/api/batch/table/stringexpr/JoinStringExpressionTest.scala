@@ -19,9 +19,9 @@
 package org.apache.flink.table.api.batch.table.stringexpr
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.Literal
+import org.apache.flink.table.api._
 import org.apache.flink.table.utils.TableTestBase
+
 import org.junit._
 
 class JoinStringExpressionTest extends TableTestBase {
@@ -112,7 +112,7 @@ class JoinStringExpressionTest extends TableTestBase {
     val ds2 = util.addTable[(Int, Long, Int, String, Long)]("Table5", 'd, 'e, 'f, 'g, 'h)
 
     val t1 = ds1.join(ds2)
-      .where(Literal(true))
+      .where(true)
       .join(ds3)
       .where('a === 'd && 'e === 'k)
       .select('a, 'f, 'l)

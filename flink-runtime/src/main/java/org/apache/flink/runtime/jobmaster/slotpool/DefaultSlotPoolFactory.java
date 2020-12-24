@@ -20,35 +20,21 @@ package org.apache.flink.runtime.jobmaster.slotpool;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.JobManagerOptions;
-import org.apache.flink.runtime.akka.AkkaUtils;
-import org.apache.flink.runtime.util.clock.Clock;
-import org.apache.flink.runtime.util.clock.SystemClock;
+import org.apache.flink.util.clock.Clock;
 
 import javax.annotation.Nonnull;
 
 /**
  * Default slot pool factory.
  */
-public class DefaultSlotPoolFactory implements SlotPoolFactory {
-
-	@Nonnull
-	private final Clock clock;
-
-	@Nonnull
-	private final Time rpcTimeout;
-
-	@Nonnull
-	private final Time slotIdleTimeout;
+public class DefaultSlotPoolFactory extends AbstractSlotPoolFactory {
 
 	public DefaultSlotPoolFactory(
 			@Nonnull Clock clock,
 			@Nonnull Time rpcTimeout,
-			@Nonnull Time slotIdleTimeout) {
-		this.clock = clock;
-		this.rpcTimeout = rpcTimeout;
-		this.slotIdleTimeout = slotIdleTimeout;
+			@Nonnull Time slotIdleTimeout,
+			@Nonnull Time batchSlotTimeout) {
+		super(clock, rpcTimeout, slotIdleTimeout, batchSlotTimeout);
 	}
 
 	@Override
@@ -58,17 +44,7 @@ public class DefaultSlotPoolFactory implements SlotPoolFactory {
 			jobId,
 			clock,
 			rpcTimeout,
-			slotIdleTimeout);
-	}
-
-	public static DefaultSlotPoolFactory fromConfiguration(@Nonnull Configuration configuration) {
-
-		final Time rpcTimeout = AkkaUtils.getTimeoutAsTime(configuration);
-		final Time slotIdleTimeout = Time.milliseconds(configuration.getLong(JobManagerOptions.SLOT_IDLE_TIMEOUT));
-
-		return new DefaultSlotPoolFactory(
-			SystemClock.getInstance(),
-			rpcTimeout,
-			slotIdleTimeout);
+			slotIdleTimeout,
+			batchSlotTimeout);
 	}
 }

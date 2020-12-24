@@ -38,6 +38,7 @@ import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.HttpResponseSt
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.LastHttpContent;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.Attribute;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.DefaultHttpDataFactory;
+import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.DiskAttribute;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.DiskFileUpload;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.HttpDataFactory;
 import org.apache.flink.shaded.netty4.io.netty.handler.codec.http.multipart.HttpPostRequestDecoder;
@@ -50,6 +51,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,7 +86,17 @@ public class FileUploadHandler extends SimpleChannelInboundHandler<HttpObject> {
 
 	public FileUploadHandler(final Path uploadDir) {
 		super(true);
+
+		// the clean up of temp files when jvm exits is handled by org.apache.flink.util.ShutdownHookUtil; thus,
+		// it's no need to register those files (post chunks and upload file chunks) to java.io.DeleteOnExitHook
+		// which may lead to memory leak.
+		DiskAttribute.deleteOnExitTemporaryFile = false;
+		DiskFileUpload.deleteOnExitTemporaryFile = false;
+
 		DiskFileUpload.baseDirectory = uploadDir.normalize().toAbsolutePath().toString();
+		// share the same directory with file upload for post chunks storage.
+		DiskAttribute.baseDirectory = DiskFileUpload.baseDirectory;
+
 		this.uploadDir = requireNonNull(uploadDir);
 	}
 
@@ -127,9 +139,11 @@ public class FileUploadHandler extends SimpleChannelInboundHandler<HttpObject> {
 						final DiskFileUpload fileUpload = (DiskFileUpload) data;
 						checkState(fileUpload.isCompleted());
 
-						final Path dest = currentUploadDir.resolve(fileUpload.getFilename());
+						// wrapping around another File instantiation is a simple way to remove any path information - we're
+						// solely interested in the filename
+						final Path dest = currentUploadDir.resolve(new File(fileUpload.getFilename()).getName());
 						fileUpload.renameTo(dest.toFile());
-						LOG.trace("Upload of file {} complete.", fileUpload.getFilename());
+						LOG.trace("Upload of file {} into destination {} complete.", fileUpload.getFilename(), dest.toString());
 					} else if (data.getHttpDataType() == InterfaceHttpData.HttpDataType.Attribute) {
 						final Attribute request = (Attribute) data;
 						// this could also be implemented by using the first found Attribute as the payload

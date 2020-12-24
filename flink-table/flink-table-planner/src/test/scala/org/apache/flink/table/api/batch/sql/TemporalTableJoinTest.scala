@@ -17,15 +17,14 @@
  */
 package org.apache.flink.table.api.batch.sql
 
-import java.sql.Timestamp
-
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.{TableException, ValidationException}
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.utils.TableTestUtil._
+import org.apache.flink.table.api._
 import org.apache.flink.table.utils._
+
 import org.hamcrest.Matchers.startsWith
 import org.junit.Test
+
+import java.sql.Timestamp
 
 class TemporalTableJoinTest extends TableTestBase {
 
@@ -50,7 +49,7 @@ class TemporalTableJoinTest extends TableTestBase {
       "o_amount * rate as rate " +
       "FROM Orders AS o, " +
       "LATERAL TABLE (Rates(o_rowtime)) AS r " +
-      "WHERE currency = o_currency";
+      "WHERE currency = o_currency"
 
     util.printSql(sqlQuery)
   }
@@ -81,7 +80,7 @@ class TemporalTableJoinTest extends TableTestBase {
         "LATERAL TABLE (Rates(o_rowtime)) AS r " +
         "WHERE currency = o_currency OR secondary_key = o_secondary_key), " +
         "Table3 " +
-      "WHERE t3_secondary_key = secondary_key";
+      "WHERE t3_secondary_key = secondary_key"
 
     util.printSql(sqlQuery)
   }
@@ -95,7 +94,7 @@ class TemporalTableJoinTest extends TableTestBase {
       "o_amount * rate as rate " +
       "FROM Orders AS o, " +
       "LATERAL TABLE (Rates(TIMESTAMP '2016-06-27 10:10:42.123')) AS r " +
-      "WHERE currency = o_currency";
+      "WHERE currency = o_currency"
 
     util.printSql(sqlQuery)
   }
@@ -105,7 +104,7 @@ class TemporalTableJoinTest extends TableTestBase {
     expectedException.expect(classOf[TableException])
     expectedException.expectMessage(startsWith("Cannot generate a valid execution plan"))
 
-    val sqlQuery = "SELECT * FROM LATERAL TABLE (Rates(TIMESTAMP '2016-06-27 10:10:42.123'))";
+    val sqlQuery = "SELECT * FROM LATERAL TABLE (Rates(TIMESTAMP '2016-06-27 10:10:42.123'))"
 
     util.printSql(sqlQuery)
   }

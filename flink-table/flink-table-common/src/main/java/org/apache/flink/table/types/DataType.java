@@ -27,6 +27,7 @@ import org.apache.flink.util.Preconditions;
 import javax.annotation.Nullable;
 
 import java.io.Serializable;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -34,7 +35,7 @@ import java.util.Objects;
  * declare input and/or output types of operations.
  *
  * <p>The {@link DataType} class has two responsibilities: declaring a logical type and giving hints
- * about the physical representation of data to the optimizer. While the logical type is mandatory,
+ * about the physical representation of data to the planner. While the logical type is mandatory,
  * hints are optional but useful at the edges to other APIs.
  *
  * <p>The logical type is independent of any physical representation and is close to the "data type"
@@ -50,15 +51,17 @@ import java.util.Objects;
  * @see DataTypes for a list of supported data types and instances of this class.
  */
 @PublicEvolving
-public abstract class DataType implements Serializable {
+public abstract class DataType implements AbstractDataType<DataType>, Serializable {
 
-	protected LogicalType logicalType;
+	protected final LogicalType logicalType;
 
-	protected @Nullable Class<?> conversionClass;
+	protected final Class<?> conversionClass;
 
 	DataType(LogicalType logicalType, @Nullable Class<?> conversionClass) {
 		this.logicalType = Preconditions.checkNotNull(logicalType, "Logical type must not be null.");
-		this.conversionClass = performEarlyClassValidation(logicalType, conversionClass);
+		this.conversionClass = performEarlyClassValidation(
+			logicalType,
+			ensureConversionClass(logicalType, conversionClass));
 	}
 
 	/**
@@ -79,42 +82,10 @@ public abstract class DataType implements Serializable {
 	 * @return the expected conversion class
 	 */
 	public Class<?> getConversionClass() {
-		if (conversionClass == null) {
-			return logicalType.getDefaultConversion();
-		}
 		return conversionClass;
 	}
 
-	/**
-	 * Adds a hint that null values are not expected in the data for this type.
-	 *
-	 * @return a new, reconfigured data type instance
-	 */
-	public abstract DataType notNull();
-
-	/**
-	 * Adds a hint that null values are expected in the data for this type (default behavior).
-	 *
-	 * <p>This method exists for explicit declaration of the default behavior or for invalidation of
-	 * a previous call to {@link #notNull()}.
-	 *
-	 * @return a new, reconfigured data type instance
-	 */
-	public abstract DataType nullable();
-
-	/**
-	 * Adds a hint that data should be represented using the given class when entering or leaving
-	 * the table ecosystem.
-	 *
-	 * <p>A supported conversion class depends on the logical type and its nullability property.
-	 *
-	 * <p>Please see the implementation of {@link LogicalType#supportsInputConversion(Class)},
-	 * {@link LogicalType#supportsOutputConversion(Class)}, or the documentation for more information
-	 * about supported conversions.
-	 *
-	 * @return a new, reconfigured data type instance
-	 */
-	public abstract DataType bridgedTo(Class<?> newConversionClass);
+	public abstract List<DataType> getChildren();
 
 	public abstract <R> R accept(DataTypeVisitor<R> visitor);
 
@@ -133,7 +104,7 @@ public abstract class DataType implements Serializable {
 		}
 		DataType dataType = (DataType) o;
 		return logicalType.equals(dataType.logicalType) &&
-			Objects.equals(conversionClass, dataType.conversionClass);
+			conversionClass.equals(dataType.conversionClass);
 	}
 
 	@Override
@@ -161,5 +132,12 @@ public abstract class DataType implements Serializable {
 					candidate.getName()));
 		}
 		return candidate;
+	}
+
+	private static Class<?> ensureConversionClass(LogicalType logicalType, @Nullable Class<?> clazz) {
+		if (clazz == null) {
+			return logicalType.getDefaultConversion();
+		}
+		return clazz;
 	}
 }

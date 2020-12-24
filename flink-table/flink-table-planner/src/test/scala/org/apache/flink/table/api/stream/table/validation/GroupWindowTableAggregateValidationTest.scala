@@ -18,10 +18,10 @@
 package org.apache.flink.table.api.stream.table.validation
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.{Session, Slide, Tumble, ValidationException}
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.WeightedAvgWithMerge
 import org.apache.flink.table.utils.{TableTestBase, Top3}
+
 import org.junit.Test
 
 class GroupWindowTableAggregateValidationTest extends TableTestBase {
@@ -49,7 +49,7 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
   def testInvalidRowTimeRef(): Unit = {
     expectedException.expect(classOf[ValidationException])
     expectedException.expectMessage(
-      "Cannot resolve field [int], input field list:[string, TMP_0].")
+      "Cannot resolve field [int], input field list:[string, EXPR$0].")
 
     table
       .window(Tumble over 5.milli on 'rowtime as 'w)
@@ -76,8 +76,8 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
   @Test
   def testInvalidTumblingSizeType(): Unit = {
     expectedException.expect(classOf[ValidationException])
-    expectedException.expectMessage("Tumbling window expects size literal of type Interval of " +
-      "Milliseconds or Interval of Rows.")
+    expectedException.expectMessage(
+      "Tumbling window expects a size literal of a day-time interval or BIGINT type.")
 
     table
       // row interval is not valid for session windows
@@ -129,8 +129,8 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
   @Test
   def testInvalidSlidingSizeType(): Unit = {
     expectedException.expect(classOf[ValidationException])
-    expectedException.expectMessage("A sliding window expects size literal of type Interval of " +
-      "Milliseconds or Interval of Rows.")
+    expectedException.expectMessage(
+      "A sliding window expects a size literal of a day-time interval or BIGINT type.")
 
     table
       // row and time intervals may not be mixed
@@ -156,8 +156,8 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
   @Test
   def testInvalidSessionGap(): Unit = {
     expectedException.expect(classOf[ValidationException])
-    expectedException.expectMessage("A session window expects gap literal of type " +
-      "Interval of Milliseconds.")
+    expectedException.expectMessage(
+      "A session window expects a gap literal of a day-time interval type.")
 
     table
       // row interval is not valid for session windows
@@ -170,8 +170,8 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
   @Test
   def testInvalidSessionGapType(): Unit = {
     expectedException.expect(classOf[ValidationException])
-    expectedException.expectMessage("A session window expects gap literal of type " +
-      "Interval of Milliseconds.")
+    expectedException.expectMessage(
+      "A session window expects a gap literal of a day-time interval type.")
 
     table
       // row interval is not valid for session windows
@@ -253,5 +253,20 @@ class GroupWindowTableAggregateValidationTest extends TableTestBase {
       .groupBy('string, 'w)
       .flatAggregate(top3('int))
       .select('string, 'f0.count)
+  }
+
+  @Test
+  def testInvalidStarInSelection(): Unit = {
+    expectedException.expect(classOf[ValidationException])
+    expectedException.expectMessage("Can not use * for window aggregate!")
+
+    val util = streamTestUtil()
+    val table = util.addTable[(Long, Int, String)]('long, 'int, 'string, 'proctime.proctime)
+
+    table
+      .window(Tumble over 2.rows on 'proctime as 'w)
+      .groupBy('string, 'w)
+      .flatAggregate(top3('int))
+      .select('*)
   }
 }

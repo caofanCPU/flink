@@ -25,9 +25,6 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.CloseableRegistry;
 import org.apache.flink.core.testutils.OneShotLatch;
 import org.apache.flink.metrics.MetricGroup;
-import org.apache.flink.runtime.blob.BlobCacheService;
-import org.apache.flink.runtime.blob.PermanentBlobCache;
-import org.apache.flink.runtime.blob.TransientBlobCache;
 import org.apache.flink.runtime.broadcast.BroadcastVariableManager;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.clusterframework.types.AllocationID;
@@ -36,27 +33,26 @@ import org.apache.flink.runtime.deployment.InputGateDeploymentDescriptor;
 import org.apache.flink.runtime.deployment.ResultPartitionDeploymentDescriptor;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.execution.ExecutionState;
-import org.apache.flink.runtime.execution.librarycache.BlobLibraryCacheManager;
-import org.apache.flink.runtime.execution.librarycache.FlinkUserCodeClassLoaders;
+import org.apache.flink.runtime.execution.librarycache.TestingClassLoaderLease;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.runtime.executiongraph.JobInformation;
 import org.apache.flink.runtime.executiongraph.TaskInformation;
+import org.apache.flink.runtime.externalresource.ExternalResourceInfoProvider;
 import org.apache.flink.runtime.filecache.FileCache;
 import org.apache.flink.runtime.io.disk.iomanager.IOManagerAsync;
-import org.apache.flink.runtime.io.network.NetworkEnvironment;
-import org.apache.flink.runtime.io.network.NetworkEnvironmentBuilder;
+import org.apache.flink.runtime.io.network.NettyShuffleEnvironmentBuilder;
 import org.apache.flink.runtime.io.network.TaskEventDispatcher;
-import org.apache.flink.runtime.io.network.netty.PartitionProducerStateChecker;
 import org.apache.flink.runtime.io.network.partition.NoOpResultPartitionConsumableNotifier;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobgraph.tasks.InputSplitProvider;
-import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.query.KvStateRegistry;
 import org.apache.flink.runtime.query.TaskKvStateRegistry;
+import org.apache.flink.runtime.shuffle.ShuffleEnvironment;
 import org.apache.flink.runtime.state.AbstractKeyedStateBackend;
-import org.apache.flink.runtime.state.CheckpointStorage;
+import org.apache.flink.runtime.state.CheckpointStorageAccess;
 import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.CompletedCheckpointStorageLocation;
 import org.apache.flink.runtime.state.KeyGroupRange;
@@ -66,11 +62,13 @@ import org.apache.flink.runtime.state.OperatorStateHandle;
 import org.apache.flink.runtime.state.SnapshotResult;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.TestTaskStateManager;
-import org.apache.flink.runtime.state.memory.MemoryBackendCheckpointStorage;
+import org.apache.flink.runtime.state.memory.MemoryBackendCheckpointStorageAccess;
 import org.apache.flink.runtime.state.ttl.TtlTimeProvider;
 import org.apache.flink.runtime.taskexecutor.KvStateService;
+import org.apache.flink.runtime.taskexecutor.PartitionProducerStateChecker;
 import org.apache.flink.runtime.taskexecutor.TestGlobalAggregateManager;
 import org.apache.flink.runtime.taskmanager.CheckpointResponder;
+import org.apache.flink.runtime.taskmanager.NoOpTaskOperatorEventGateway;
 import org.apache.flink.runtime.taskmanager.Task;
 import org.apache.flink.runtime.taskmanager.TaskManagerActions;
 import org.apache.flink.runtime.taskmanager.TaskManagerRuntimeInfo;
@@ -79,12 +77,15 @@ import org.apache.flink.runtime.util.TestingTaskManagerRuntimeInfo;
 import org.apache.flink.streaming.api.graph.StreamConfig;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperator;
+import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxDefaultAction;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.SerializedValue;
 import org.apache.flink.util.TestLogger;
 
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
 
 import javax.annotation.Nonnull;
 
@@ -95,6 +96,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
@@ -107,9 +109,12 @@ import static org.mockito.Mockito.when;
  */
 public class StreamTaskTerminationTest extends TestLogger {
 
-	public static final OneShotLatch RUN_LATCH = new OneShotLatch();
-	public static final OneShotLatch CHECKPOINTING_LATCH = new OneShotLatch();
+	private static final OneShotLatch RUN_LATCH = new OneShotLatch();
+	private static final AtomicBoolean SNAPSHOT_HAS_STARTED = new AtomicBoolean();
 	private static final OneShotLatch CLEANUP_LATCH = new OneShotLatch();
+
+	@Rule
+	public final Timeout timeoutPerTest = Timeout.seconds(10);
 
 	/**
 	 * FLINK-6833
@@ -150,10 +155,7 @@ public class StreamTaskTerminationTest extends TestLogger {
 
 		final TaskManagerRuntimeInfo taskManagerRuntimeInfo = new TestingTaskManagerRuntimeInfo();
 
-		final NetworkEnvironment networkEnv = new NetworkEnvironmentBuilder().build();
-
-		BlobCacheService blobService =
-			new BlobCacheService(mock(PermanentBlobCache.class), mock(TransientBlobCache.class));
+		final ShuffleEnvironment<?, ?> shuffleEnvironment = new NettyShuffleEnvironmentBuilder().build();
 
 		final Task task = new Task(
 			jobInformation,
@@ -165,22 +167,20 @@ public class StreamTaskTerminationTest extends TestLogger {
 			Collections.<ResultPartitionDeploymentDescriptor>emptyList(),
 			Collections.<InputGateDeploymentDescriptor>emptyList(),
 			0,
-			new MemoryManager(32L * 1024L, 1),
+			MemoryManagerBuilder.newBuilder().setMemorySize(32L * 1024L).build(),
 			new IOManagerAsync(),
-			networkEnv,
+			shuffleEnvironment,
 			new KvStateService(new KvStateRegistry(), null, null),
 			mock(BroadcastVariableManager.class),
 			new TaskEventDispatcher(),
+			ExternalResourceInfoProvider.NO_EXTERNAL_RESOURCES,
 			new TestTaskStateManager(),
 			mock(TaskManagerActions.class),
 			mock(InputSplitProvider.class),
 			mock(CheckpointResponder.class),
+			new NoOpTaskOperatorEventGateway(),
 			new TestGlobalAggregateManager(),
-			blobService,
-			new BlobLibraryCacheManager(
-				blobService.getPermanentBlobService(),
-				FlinkUserCodeClassLoaders.ResolveOrder.CHILD_FIRST,
-				new String[0]),
+			TestingClassLoaderLease.newBuilder().build(),
 			mock(FileCache.class),
 			taskManagerRuntimeInfo,
 			UnregisteredMetricGroups.createUnregisteredTaskMetricGroup(),
@@ -216,7 +216,9 @@ public class StreamTaskTerminationTest extends TestLogger {
 	 */
 	public static class BlockingStreamTask<T, OP extends StreamOperator<T>> extends StreamTask<T, OP> {
 
-		public BlockingStreamTask(Environment env) {
+		private boolean isRunning;
+
+		public BlockingStreamTask(Environment env) throws Exception {
 			super(env);
 		}
 
@@ -225,10 +227,15 @@ public class StreamTaskTerminationTest extends TestLogger {
 		}
 
 		@Override
-		protected void run() throws Exception {
-			RUN_LATCH.trigger();
+		protected void processInput(MailboxDefaultAction.Controller controller) throws Exception {
+			if (!isRunning) {
+				isRunning = true;
+				RUN_LATCH.trigger();
+			}
 			// wait until we have started an asynchronous checkpoint
-			CHECKPOINTING_LATCH.await();
+			if (isCanceled() || SNAPSHOT_HAS_STARTED.get()) {
+				controller.allActionsCompleted();
+			}
 		}
 
 		@Override
@@ -239,10 +246,6 @@ public class StreamTaskTerminationTest extends TestLogger {
 
 			// wait until all async checkpoint threads are terminated, so that no more exceptions can be reported
 			Assert.assertTrue(getAsyncOperationsThreadPool().awaitTermination(30L, TimeUnit.SECONDS));
-		}
-
-		@Override
-		protected void cancelTask() {
 		}
 	}
 
@@ -260,8 +263,8 @@ public class StreamTaskTerminationTest extends TestLogger {
 		}
 
 		@Override
-		public CheckpointStorage createCheckpointStorage(JobID jobId) throws IOException {
-			return new MemoryBackendCheckpointStorage(jobId, null, null, Integer.MAX_VALUE);
+		public CheckpointStorageAccess createCheckpointStorage(JobID jobId) throws IOException {
+			return new MemoryBackendCheckpointStorageAccess(jobId, null, null, Integer.MAX_VALUE);
 		}
 
 		@Override
@@ -299,7 +302,7 @@ public class StreamTaskTerminationTest extends TestLogger {
 		@Override
 		public SnapshotResult<OperatorStateHandle> call() throws Exception {
 			// notify that we have started the asynchronous checkpointed operation
-			CHECKPOINTING_LATCH.trigger();
+			SNAPSHOT_HAS_STARTED.set(true);
 			// wait until we have reached the StreamTask#cleanup --> This will already cancel this FutureTask
 			CLEANUP_LATCH.await();
 

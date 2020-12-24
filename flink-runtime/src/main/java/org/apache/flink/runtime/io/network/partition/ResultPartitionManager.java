@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -59,6 +60,7 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 			int subpartitionIndex,
 			BufferAvailabilityListener availabilityListener) throws IOException {
 
+		final ResultSubpartitionView subpartitionView;
 		synchronized (registeredPartitions) {
 			final ResultPartition partition = registeredPartitions.get(partitionId);
 
@@ -68,8 +70,10 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 
 			LOG.debug("Requesting subpartition {} of {}.", subpartitionIndex, partition);
 
-			return partition.createSubpartitionView(subpartitionIndex, availabilityListener);
+			subpartitionView = partition.createSubpartitionView(subpartitionIndex, availabilityListener);
 		}
+
+		return subpartitionView;
 	}
 
 	public void releasePartition(ResultPartitionID partitionId, Throwable cause) {
@@ -106,30 +110,23 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 	// ------------------------------------------------------------------------
 
 	void onConsumedPartition(ResultPartition partition) {
-		final ResultPartition previous;
-
 		LOG.debug("Received consume notification from {}.", partition);
 
 		synchronized (registeredPartitions) {
-			previous = registeredPartitions.remove(partition.getPartitionId());
-		}
-
-		// Release the partition if it was successfully removed
-		if (partition == previous) {
-			partition.release();
-
-			LOG.debug("Released {}.", partition);
+			final ResultPartition previous = registeredPartitions.remove(partition.getPartitionId());
+			// Release the partition if it was successfully removed
+			if (partition == previous) {
+				partition.release();
+				ResultPartitionID partitionId = partition.getPartitionId();
+				LOG.debug("Released partition {} produced by {}.",
+					partitionId.getPartitionId(), partitionId.getProducerId());
+			}
 		}
 	}
 
-	public boolean areAllPartitionsReleased() {
+	public Collection<ResultPartitionID> getUnreleasedPartitions() {
 		synchronized (registeredPartitions) {
-			for (ResultPartition partition : registeredPartitions.values()) {
-				if (!partition.isReleased()) {
-					return false;
-				}
-			}
-			return true;
+			return registeredPartitions.keySet();
 		}
 	}
 }

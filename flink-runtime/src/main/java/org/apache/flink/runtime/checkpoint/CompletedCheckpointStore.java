@@ -18,8 +18,8 @@
 
 package org.apache.flink.runtime.checkpoint;
 
-import org.apache.flink.runtime.jobgraph.JobStatus;
-import org.apache.flink.util.FlinkRuntimeException;
+import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.JobStatus;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,38 +48,33 @@ public interface CompletedCheckpointStore {
 	 * <p>Only a bounded number of checkpoints is kept. When exceeding the maximum number of
 	 * retained checkpoints, the oldest one will be discarded.
 	 */
-	void addCheckpoint(CompletedCheckpoint checkpoint) throws Exception;
+	void addCheckpoint(CompletedCheckpoint checkpoint, CheckpointsCleaner checkpointsCleaner, Runnable postCleanup) throws Exception;
 
 	/**
 	 * Returns the latest {@link CompletedCheckpoint} instance or <code>null</code> if none was
 	 * added.
 	 */
 	default CompletedCheckpoint getLatestCheckpoint(boolean isPreferCheckpointForRecovery) throws Exception {
-		if (getAllCheckpoints().isEmpty()) {
+		List<CompletedCheckpoint> allCheckpoints = getAllCheckpoints();
+		if (allCheckpoints.isEmpty()) {
 			return null;
 		}
 
-		CompletedCheckpoint candidate = getAllCheckpoints().get(getAllCheckpoints().size() - 1);
-		if (isPreferCheckpointForRecovery && getAllCheckpoints().size() > 1) {
-			List<CompletedCheckpoint> allCheckpoints;
-			try {
-				allCheckpoints = getAllCheckpoints();
-				ListIterator<CompletedCheckpoint> listIterator = allCheckpoints.listIterator(allCheckpoints.size() - 1);
-				while (listIterator.hasPrevious()) {
-					CompletedCheckpoint prev = listIterator.previous();
-					if (!prev.getProperties().isSavepoint()) {
-						candidate = prev;
-						LOG.info("Found a completed checkpoint before the latest savepoint, will use it to recover!");
-						break;
-					}
+		CompletedCheckpoint lastCompleted = allCheckpoints.get(allCheckpoints.size() - 1);
+
+		if (isPreferCheckpointForRecovery && allCheckpoints.size() > 1 && lastCompleted.getProperties().isSavepoint()) {
+			ListIterator<CompletedCheckpoint> listIterator = allCheckpoints.listIterator(allCheckpoints.size() - 1);
+			while (listIterator.hasPrevious()) {
+				CompletedCheckpoint prev = listIterator.previous();
+				if (!prev.getProperties().isSavepoint()) {
+					LOG.info("Found a completed checkpoint ({}) before the latest savepoint, will use it to recover!", prev);
+					return prev;
 				}
-			} catch (Exception e) {
-				LOG.error("Method getAllCheckpoints caused exception : ", e);
-				throw new FlinkRuntimeException(e);
 			}
+			LOG.info("Did not find earlier checkpoint, using latest savepoint to recover.");
 		}
 
-		return candidate;
+		return lastCompleted;
 	}
 
 	/**
@@ -90,7 +85,7 @@ public interface CompletedCheckpointStore {
 	 *
 	 * @param jobStatus Job state on shut down
 	 */
-	void shutdown(JobStatus jobStatus) throws Exception;
+	void shutdown(JobStatus jobStatus, CheckpointsCleaner checkpointsCleaner, Runnable postCleanup) throws Exception;
 
 	/**
 	 * Returns all {@link CompletedCheckpoint} instances.
@@ -113,9 +108,19 @@ public interface CompletedCheckpointStore {
 	 * This method returns whether the completed checkpoint store requires checkpoints to be
 	 * externalized. Externalized checkpoints have their meta data persisted, which the checkpoint
 	 * store can exploit (for example by simply pointing the persisted metadata).
-	 * 
+	 *
 	 * @return True, if the store requires that checkpoints are externalized before being added, false
 	 *         if the store stores the metadata itself.
 	 */
 	boolean requiresExternalizedCheckpoints();
+
+	@VisibleForTesting
+	static CompletedCheckpointStore storeFor(Runnable postCleanupAction, CompletedCheckpoint... checkpoints) throws Exception {
+		StandaloneCompletedCheckpointStore store = new StandaloneCompletedCheckpointStore(checkpoints.length);
+		CheckpointsCleaner checkpointsCleaner = new CheckpointsCleaner();
+		for (final CompletedCheckpoint checkpoint : checkpoints) {
+			store.addCheckpoint(checkpoint, checkpointsCleaner, postCleanupAction);
+		}
+		return store;
+	}
 }

@@ -18,6 +18,7 @@
 
 package org.apache.flink.streaming.runtime.tasks;
 
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.ClosureCleaner;
@@ -27,10 +28,9 @@ import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.io.network.partition.consumer.StreamTestSingleInputGate;
 import org.apache.flink.runtime.state.LocalRecoveryConfig;
 import org.apache.flink.runtime.state.TestLocalRecoveryConfig;
+import org.apache.flink.util.function.FunctionWithException;
 
 import java.io.File;
-import java.io.IOException;
-import java.util.function.Function;
 
 
 /**
@@ -62,7 +62,7 @@ public class OneInputStreamTaskTestHarness<IN, OUT> extends StreamTaskTestHarnes
 	 * of channels per input gate and local recovery disabled.
 	 */
 	public OneInputStreamTaskTestHarness(
-		Function<Environment, ? extends StreamTask<OUT, ?>> taskFactory,
+		FunctionWithException<Environment, ? extends StreamTask<OUT, ?>, Exception> taskFactory,
 		int numInputGates,
 		int numInputChannelsPerGate,
 		TypeInformation<IN> inputType,
@@ -71,7 +71,7 @@ public class OneInputStreamTaskTestHarness<IN, OUT> extends StreamTaskTestHarnes
 	}
 
 	public OneInputStreamTaskTestHarness(
-		Function<Environment, ? extends StreamTask<OUT, ?>> taskFactory,
+		FunctionWithException<Environment, ? extends StreamTask<OUT, ?>, Exception> taskFactory,
 		int numInputGates,
 		int numInputChannelsPerGate,
 		TypeInformation<IN> inputType,
@@ -93,7 +93,7 @@ public class OneInputStreamTaskTestHarness<IN, OUT> extends StreamTaskTestHarnes
 	 * of channels per input gate and specified localRecoveryConfig.
 	 */
 	public OneInputStreamTaskTestHarness(
-			Function<Environment, ? extends StreamTask<OUT, ?>> taskFactory,
+			FunctionWithException<Environment, ? extends StreamTask<OUT, ?>, Exception> taskFactory,
 			int numInputGates,
 			int numInputChannelsPerGate,
 			TypeInformation<IN> inputType,
@@ -113,32 +113,34 @@ public class OneInputStreamTaskTestHarness<IN, OUT> extends StreamTaskTestHarnes
 	 * Creates a test harness with one input gate that has one input channel.
 	 */
 	public OneInputStreamTaskTestHarness(
-		Function<Environment, ? extends StreamTask<OUT, ?>> taskFactory,
+		FunctionWithException<Environment, ? extends StreamTask<OUT, ?>, Exception> taskFactory,
 		TypeInformation<IN> inputType,
 		TypeInformation<OUT> outputType) {
 		this(taskFactory, 1, 1, inputType, outputType, TestLocalRecoveryConfig.disabled());
 	}
 
 	@Override
-	protected void initializeInputs() throws IOException, InterruptedException {
+	protected void initializeInputs() {
 		inputGates = new StreamTestSingleInputGate[numInputGates];
 
 		for (int i = 0; i < numInputGates; i++) {
 			inputGates[i] = new StreamTestSingleInputGate<IN>(
 				numInputChannelsPerGate,
-				bufferSize,
-				inputSerializer);
+				i,
+				inputSerializer,
+				bufferSize
+			);
 			this.mockEnv.addInputGate(inputGates[i].getInputGate());
 		}
 
-		streamConfig.setNumberOfInputs(1);
-		streamConfig.setTypeSerializerIn1(inputSerializer);
+		streamConfig.setNumberOfNetworkInputs(1);
+		streamConfig.setTypeSerializersIn(inputSerializer);
 	}
 
 	public <K> void configureForKeyedStream(
 			KeySelector<IN, K> keySelector,
 			TypeInformation<K> keyType) {
-		ClosureCleaner.clean(keySelector, false);
+		ClosureCleaner.clean(keySelector, ExecutionConfig.ClosureCleanerLevel.RECURSIVE, false);
 		streamConfig.setStatePartitioner(0, keySelector);
 		streamConfig.setStateKeySerializer(keyType.createSerializer(executionConfig));
 	}

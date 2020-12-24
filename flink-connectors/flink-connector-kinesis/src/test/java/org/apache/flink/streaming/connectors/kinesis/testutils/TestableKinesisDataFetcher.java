@@ -17,17 +17,15 @@
 
 package org.apache.flink.streaming.connectors.kinesis.testutils;
 
-import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.core.testutils.OneShotLatch;
-import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.connectors.kinesis.internals.KinesisDataFetcher;
 import org.apache.flink.streaming.connectors.kinesis.model.KinesisStreamShardState;
 import org.apache.flink.streaming.connectors.kinesis.model.StreamShardHandle;
 import org.apache.flink.streaming.connectors.kinesis.proxy.KinesisProxyInterface;
+import org.apache.flink.streaming.connectors.kinesis.proxy.KinesisProxyV2Interface;
 import org.apache.flink.streaming.connectors.kinesis.serialization.KinesisDeserializationSchema;
 
-import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
 
 import java.util.HashMap;
@@ -48,11 +46,37 @@ import static org.mockito.Mockito.when;
  */
 public class TestableKinesisDataFetcher<T> extends KinesisDataFetcher<T> {
 
-	private OneShotLatch runWaiter;
-	private OneShotLatch initialDiscoveryWaiter;
-	private OneShotLatch shutdownWaiter;
+	private final OneShotLatch runWaiter;
+	private final OneShotLatch initialDiscoveryWaiter;
+	private final OneShotLatch shutdownWaiter;
 
 	private volatile boolean running;
+
+	public TestableKinesisDataFetcher(
+		List<String> fakeStreams,
+		SourceFunction.SourceContext<T> sourceContext,
+		Properties fakeConfiguration,
+		KinesisDeserializationSchema<T> deserializationSchema,
+		int fakeTotalCountOfSubtasks,
+		int fakeIndexOfThisSubtask,
+		AtomicReference<Throwable> thrownErrorUnderTest,
+		LinkedList<KinesisStreamShardState> subscribedShardsStateUnderTest,
+		HashMap<String, String> subscribedStreamsToLastDiscoveredShardIdsStateUnderTest,
+		KinesisProxyInterface fakeKinesis) {
+
+		this(
+			fakeStreams,
+			sourceContext,
+			fakeConfiguration,
+			deserializationSchema,
+			fakeTotalCountOfSubtasks,
+			fakeIndexOfThisSubtask,
+			thrownErrorUnderTest,
+			subscribedShardsStateUnderTest,
+			subscribedStreamsToLastDiscoveredShardIdsStateUnderTest,
+			fakeKinesis,
+			null);
+	}
 
 	public TestableKinesisDataFetcher(
 			List<String> fakeStreams,
@@ -64,20 +88,23 @@ public class TestableKinesisDataFetcher<T> extends KinesisDataFetcher<T> {
 			AtomicReference<Throwable> thrownErrorUnderTest,
 			LinkedList<KinesisStreamShardState> subscribedShardsStateUnderTest,
 			HashMap<String, String> subscribedStreamsToLastDiscoveredShardIdsStateUnderTest,
-			KinesisProxyInterface fakeKinesis) {
+			KinesisProxyInterface fakeKinesis,
+			KinesisProxyV2Interface fakeKinesisV2) {
 		super(
 			fakeStreams,
 			sourceContext,
 			sourceContext.getCheckpointLock(),
-			getMockedRuntimeContext(fakeTotalCountOfSubtasks, fakeIndexOfThisSubtask),
+			TestUtils.getMockedRuntimeContext(fakeTotalCountOfSubtasks, fakeIndexOfThisSubtask),
 			fakeConfiguration,
 			deserializationSchema,
 			DEFAULT_SHARD_ASSIGNER,
 			null,
+			null,
 			thrownErrorUnderTest,
 			subscribedShardsStateUnderTest,
 			subscribedStreamsToLastDiscoveredShardIdsStateUnderTest,
-			(properties) -> fakeKinesis);
+			properties -> fakeKinesis,
+			properties -> fakeKinesisV2);
 
 		this.runWaiter = new OneShotLatch();
 		this.initialDiscoveryWaiter = new OneShotLatch();
@@ -136,19 +163,4 @@ public class TestableKinesisDataFetcher<T> extends KinesisDataFetcher<T> {
 		initialDiscoveryWaiter.await();
 	}
 
-	private static RuntimeContext getMockedRuntimeContext(final int fakeTotalCountOfSubtasks, final int fakeIndexOfThisSubtask) {
-		RuntimeContext mockedRuntimeContext = mock(RuntimeContext.class);
-
-		Mockito.when(mockedRuntimeContext.getNumberOfParallelSubtasks()).thenReturn(fakeTotalCountOfSubtasks);
-		Mockito.when(mockedRuntimeContext.getIndexOfThisSubtask()).thenReturn(fakeIndexOfThisSubtask);
-		Mockito.when(mockedRuntimeContext.getTaskName()).thenReturn("Fake Task");
-		Mockito.when(mockedRuntimeContext.getTaskNameWithSubtasks()).thenReturn(
-				"Fake Task (" + fakeIndexOfThisSubtask + "/" + fakeTotalCountOfSubtasks + ")");
-		Mockito.when(mockedRuntimeContext.getUserCodeClassLoader()).thenReturn(
-				Thread.currentThread().getContextClassLoader());
-
-		Mockito.when(mockedRuntimeContext.getMetricGroup()).thenReturn(new UnregisteredMetricsGroup());
-
-		return mockedRuntimeContext;
-	}
 }

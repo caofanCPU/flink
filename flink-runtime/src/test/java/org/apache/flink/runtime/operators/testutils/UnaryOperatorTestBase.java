@@ -30,24 +30,27 @@ import org.apache.flink.runtime.io.disk.iomanager.IOManager;
 import org.apache.flink.runtime.io.disk.iomanager.IOManagerAsync;
 import org.apache.flink.runtime.jobgraph.tasks.AbstractInvokable;
 import org.apache.flink.runtime.memory.MemoryManager;
+import org.apache.flink.runtime.memory.MemoryManagerBuilder;
 import org.apache.flink.runtime.metrics.groups.OperatorMetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.operators.Driver;
-import org.apache.flink.runtime.operators.TaskContext;
 import org.apache.flink.runtime.operators.ResettableDriver;
-import org.apache.flink.runtime.operators.sort.UnilateralSortMerger;
+import org.apache.flink.runtime.operators.TaskContext;
+import org.apache.flink.runtime.operators.sort.Sorter;
+import org.apache.flink.runtime.operators.sort.ExternalSorter;
 import org.apache.flink.runtime.operators.util.TaskConfig;
 import org.apache.flink.runtime.taskmanager.TaskManagerRuntimeInfo;
 import org.apache.flink.runtime.util.TestingTaskManagerRuntimeInfo;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.MutableObjectIterator;
-
 import org.apache.flink.util.TestLogger;
+
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -72,7 +75,7 @@ public abstract class UnaryOperatorTestBase<S extends Function, IN, OUT> extends
 	
 	private List<TypeComparator<IN>> comparators;
 	
-	private UnilateralSortMerger<IN> sorter;
+	private Sorter<IN> sorter;
 	
 	private final AbstractInvokable owner;
 
@@ -108,7 +111,7 @@ public abstract class UnaryOperatorTestBase<S extends Function, IN, OUT> extends
 		this.perSortMem = perSortMemory;
 		this.perSortFractionMem = (double)perSortMemory/totalMem;
 		this.ioManager = new IOManagerAsync();
-		this.memManager = totalMem > 0 ? new MemoryManager(totalMem, 1) : null;
+		this.memManager = totalMem > 0 ? MemoryManagerBuilder.newBuilder().setMemorySize(totalMem).build() : null;
 		this.owner = new DummyInvokable();
 
 		Configuration config = new Configuration();
@@ -145,15 +148,21 @@ public abstract class UnaryOperatorTestBase<S extends Function, IN, OUT> extends
 	{
 		this.input = null;
 		this.inputSerializer = serializer;
-		this.sorter = new UnilateralSortMerger<IN>(
-				this.memManager, this.ioManager, input, this.owner,
-				this.<IN>getInputSerializer(0),
-				comp,
-				this.perSortFractionMem, 32, 0.8f,
-				true /*use large record handler*/,
-				false);
+		this.sorter =
+			ExternalSorter.newBuilder(
+					this.memManager,
+					this.owner,
+					this.<IN>getInputSerializer(0).getSerializer(),
+					comp)
+				.maxNumFileHandles(32)
+				.sortBuffers(1)
+				.enableSpilling(ioManager, 0.8f)
+				.memoryFraction(this.perSortFractionMem)
+				.objectReuse(false)
+				.largeRecords(true)
+				.build(input);
 	}
-	
+
 	public void addDriverComparator(TypeComparator<IN> comparator) {
 		this.comparators.add(comparator);
 	}
@@ -317,6 +326,9 @@ public abstract class UnaryOperatorTestBase<S extends Function, IN, OUT> extends
 			catch (InterruptedException e) {
 				throw new RuntimeException("Interrupted");
 			}
+			catch (IOException e) {
+				throw new RuntimeException("IOException");
+			}
 			this.input = in;
 		}
 		
@@ -378,8 +390,7 @@ public abstract class UnaryOperatorTestBase<S extends Function, IN, OUT> extends
 		}
 		
 		// 2nd, shutdown I/O
-		this.ioManager.shutdown();
-		Assert.assertTrue("I/O Manager has not properly shut down.", this.ioManager.isProperlyShutDown());
+		this.ioManager.close();
 
 		// last, verify all memory is returned and shutdown mem manager
 		MemoryManager memMan = getMemoryManager();

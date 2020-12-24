@@ -20,11 +20,12 @@ package org.apache.flink.table.api.stream.table
 
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.java.typeutils.RowTypeInfo
-import org.apache.flink.table.api.{Over, TableSchema, Tumble, Types}
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
+import org.apache.flink.table.api.internal.TableEnvironmentInternal
 import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.{TableTestBase, TestNestedProjectableTableSource, TestProjectableTableSource, TestTableSourceWithTime}
 import org.apache.flink.types.Row
+
 import org.junit.Test
 
 class TableSourceTest extends TableTestBase {
@@ -41,13 +42,14 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rowtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "rowTimeT",
       new TestTableSourceWithTime[Row](tableSchema, returnType, Seq(), rowtime = "rowtime"))
 
-    val t = util.tableEnv.scan("rowTimeT").select("rowtime, id, name, val")
+    val t = util.tableEnv.scan("rowTimeT").select($"rowtime", $"id", $"name", $"val")
 
-    val expected = "StreamTableSourceScan(table=[[rowTimeT]], fields=[rowtime, id, name, val], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, rowTimeT]], " +
+      "fields=[rowtime, id, name, val], " +
       "source=[TestTableSourceWithTime(id, rowtime, val, name)])"
     util.verifyTable(t, expected)
   }
@@ -64,13 +66,14 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rowtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "rowTimeT",
       new TestTableSourceWithTime[Row](tableSchema, returnType, Seq(), rowtime = "rowtime"))
 
-    val t = util.tableEnv.scan("rowTimeT").select("rowtime, id, name, val")
+    val t = util.tableEnv.scan("rowTimeT").select($"rowtime", $"id", $"name", $"val")
 
-    val expected = "StreamTableSourceScan(table=[[rowTimeT]], fields=[rowtime, id, name, val], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, rowTimeT]], " +
+      "fields=[rowtime, id, name, val], " +
       "source=[TestTableSourceWithTime(id, rowtime, val, name)])"
     util.verifyTable(t, expected)
   }
@@ -87,12 +90,12 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rowtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "rowTimeT",
       new TestTableSourceWithTime[Row](tableSchema, returnType, Seq(), rowtime = "rowtime"))
 
     val t = util.tableEnv.scan("rowTimeT")
-      .filter("val > 100")
+      .filter($"val" > 100)
       .window(Tumble over 10.minutes on 'rowtime as 'w)
       .groupBy('name, 'w)
       .select('name, 'w.end, 'val.avg)
@@ -104,16 +107,17 @@ class TableSourceTest extends TableTestBase {
           "DataStreamGroupWindowAggregate",
           unaryNode(
             "DataStreamCalc",
-            "StreamTableSourceScan(table=[[rowTimeT]], fields=[rowtime, val, name], " +
+            "StreamTableSourceScan(table=[[default_catalog, default_database, rowTimeT]], " +
+              "fields=[rowtime, val, name], " +
               "source=[TestTableSourceWithTime(id, rowtime, val, name)])",
             term("select", "rowtime", "val", "name"),
             term("where", ">(val, 100)")
           ),
           term("groupBy", "name"),
           term("window", "TumblingGroupWindow('w, 'rowtime, 600000.millis)"),
-          term("select", "name", "AVG(val) AS TMP_1", "end('w) AS TMP_0")
+          term("select", "name", "AVG(val) AS EXPR$1", "end('w) AS EXPR$0")
         ),
-        term("select", "name", "TMP_0", "TMP_1")
+        term("select", "name", "EXPR$0", "EXPR$1")
       )
     util.verifyTable(t, expected)
   }
@@ -129,16 +133,17 @@ class TableSourceTest extends TableTestBase {
       Array("id", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "procTimeT",
       new TestTableSourceWithTime[Row](tableSchema, returnType, Seq(), proctime = "proctime"))
 
-    val t = util.tableEnv.scan("procTimeT").select("proctime, id, name, val")
+    val t = util.tableEnv.scan("procTimeT").select($"proctime", $"id", $"name", $"val")
 
     val expected =
       unaryNode(
         "DataStreamCalc",
-        "StreamTableSourceScan(table=[[procTimeT]], fields=[id, proctime, val, name], " +
+        "StreamTableSourceScan(table=[[default_catalog, default_database, procTimeT]], " +
+          "fields=[id, proctime, val, name], " +
           "source=[TestTableSourceWithTime(id, proctime, val, name)])",
         term("select", "PROCTIME(proctime) AS proctime", "id", "name", "val")
       )
@@ -156,7 +161,7 @@ class TableSourceTest extends TableTestBase {
       Array("id", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "procTimeT",
       new TestTableSourceWithTime[Row](tableSchema, returnType, Seq(), proctime = "proctime"))
 
@@ -170,7 +175,8 @@ class TableSourceTest extends TableTestBase {
         "DataStreamCalc",
         unaryNode(
           "DataStreamOverAggregate",
-          "StreamTableSourceScan(table=[[procTimeT]], fields=[id, proctime, val, name], " +
+          "StreamTableSourceScan(table=[[default_catalog, default_database, procTimeT]], " +
+            "fields=[id, proctime, val, name], " +
             "source=[TestTableSourceWithTime(id, proctime, val, name)])",
           term("partitionBy", "id"),
           term("orderBy", "proctime"),
@@ -194,13 +200,13 @@ class TableSourceTest extends TableTestBase {
       Array("id", "name", "val", "rtime"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime"))
 
     val t = util.tableEnv.scan("T").select('name, 'val, 'id)
 
-    val expected = "StreamTableSourceScan(table=[[T]], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
       "fields=[name, val, id], " +
       "source=[TestSource(physical fields: name, val, id)])"
     util.verifyTable(t, expected)
@@ -217,7 +223,7 @@ class TableSourceTest extends TableTestBase {
       Array("id", "name", "val", "rtime"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime"))
 
@@ -225,7 +231,7 @@ class TableSourceTest extends TableTestBase {
 
     val expected = unaryNode(
       "DataStreamCalc",
-      "StreamTableSourceScan(table=[[T]], " +
+      "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
         "fields=[ptime, name, val, id], " +
         "source=[TestSource(physical fields: name, val, id)])",
       term("select", "PROCTIME(ptime) AS ptime", "name", "val", "id")
@@ -243,13 +249,13 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime"))
 
     val t = util.tableEnv.scan("T").select('name, 'val, 'rtime, 'id)
 
-    val expected = "StreamTableSourceScan(table=[[T]], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
       "fields=[name, val, rtime, id], " +
       "source=[TestSource(physical fields: name, val, rtime, id)])"
     util.verifyTable(t, expected)
@@ -265,13 +271,13 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime"))
 
     val t = util.tableEnv.scan("T").select('ptime)
 
-    val expected = "StreamTableSourceScan(table=[[T]], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
       "fields=[ptime], " +
       "source=[TestSource(physical fields: )])"
     util.verifyTable(t, expected)
@@ -287,13 +293,13 @@ class TableSourceTest extends TableTestBase {
       Array("id", "rtime", "val", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime"))
 
     val t = util.tableEnv.scan("T").select('rtime)
 
-    val expected = "StreamTableSourceScan(table=[[T]], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
       "fields=[rtime], " +
       "source=[TestSource(physical fields: rtime)])"
     util.verifyTable(t, expected)
@@ -311,13 +317,13 @@ class TableSourceTest extends TableTestBase {
     val mapping = Map("rtime" -> "p-rtime", "id" -> "p-id", "val" -> "p-val", "name" -> "p-name")
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestProjectableTableSource(tableSchema, returnType, Seq(), "rtime", "ptime", mapping))
 
     val t = util.tableEnv.scan("T").select('name, 'rtime, 'val)
 
-    val expected = "StreamTableSourceScan(table=[[T]], " +
+    val expected = "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
       "fields=[name, rtime, val], " +
       "source=[TestSource(physical fields: remapped-p-name, remapped-p-rtime, remapped-p-val)])"
     util.verifyTable(t, expected)
@@ -350,7 +356,7 @@ class TableSourceTest extends TableTestBase {
         Array("id", "deepNested", "nested", "name"))
 
     val util = streamTestUtil()
-    util.tableEnv.registerTableSource(
+    util.tableEnv.asInstanceOf[TableEnvironmentInternal].registerTableSourceInternal(
       "T",
       new TestNestedProjectableTableSource(tableSchema, returnType, Seq()))
 
@@ -364,7 +370,7 @@ class TableSourceTest extends TableTestBase {
 
     val expected = unaryNode(
       "DataStreamCalc",
-      "StreamTableSourceScan(table=[[T]], " +
+      "StreamTableSourceScan(table=[[default_catalog, default_database, T]], " +
         "fields=[id, deepNested, nested], " +
         "source=[TestSource(read nested fields: " +
           "id.*, deepNested.nested2.num, deepNested.nested2.flag, " +

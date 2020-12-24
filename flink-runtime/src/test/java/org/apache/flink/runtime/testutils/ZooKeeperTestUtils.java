@@ -24,12 +24,17 @@ import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.HighAvailabilityOptions;
 import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * ZooKeeper test utilities.
  */
 public class ZooKeeperTestUtils {
+
+	private static final Logger LOG = LoggerFactory.getLogger(ZooKeeperTestUtils.class);
 
 	/**
 	 * Creates a configuration to operate in {@link HighAvailabilityMode#ZOOKEEPER}.
@@ -68,8 +73,9 @@ public class ZooKeeperTestUtils {
 		config.setString(HighAvailabilityOptions.HA_ZOOKEEPER_QUORUM, zooKeeperQuorum);
 
 		int connTimeout = 5000;
-		if (System.getenv().containsKey("CI")) {
+		if (runsOnCIInfrastructure()) {
 			// The regular timeout is to aggressive for Travis and connections are often lost.
+			LOG.info("Detected CI environment: Configuring connection and session timeout of 30 seconds");
 			connTimeout = 30000;
 		}
 
@@ -81,14 +87,15 @@ public class ZooKeeperTestUtils {
 		config.setString(CheckpointingOptions.CHECKPOINTS_DIRECTORY, fsStateHandlePath + "/checkpoints");
 		config.setString(HighAvailabilityOptions.HA_STORAGE_PATH, fsStateHandlePath + "/recovery");
 
-		// Akka failure detection and execution retries
-		config.setString(AkkaOptions.WATCH_HEARTBEAT_INTERVAL, "1000 ms");
-		config.setString(AkkaOptions.WATCH_HEARTBEAT_PAUSE, "6 s");
-		config.setInteger(AkkaOptions.WATCH_THRESHOLD, 9);
 		config.setString(AkkaOptions.ASK_TIMEOUT, "100 s");
-		config.setString(HighAvailabilityOptions.HA_JOB_DELAY, "10 s");
 
 		return config;
 	}
 
+	/**
+	 * @return true, if a CI environment is detected.
+	 */
+	public static boolean runsOnCIInfrastructure() {
+		return System.getenv().containsKey("CI") || System.getenv().containsKey("TF_BUILD");
+	}
 }

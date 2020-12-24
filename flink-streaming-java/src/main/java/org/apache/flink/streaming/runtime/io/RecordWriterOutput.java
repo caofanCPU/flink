@@ -32,7 +32,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamElementSerializer;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.streamstatus.StreamStatus;
 import org.apache.flink.streaming.runtime.streamstatus.StreamStatusProvider;
-import org.apache.flink.streaming.runtime.tasks.OperatorChain;
+import org.apache.flink.streaming.runtime.tasks.WatermarkGaugeExposingOutput;
 import org.apache.flink.util.OutputTag;
 
 import java.io.IOException;
@@ -43,7 +43,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * Implementation of {@link Output} that sends data using a {@link RecordWriter}.
  */
 @Internal
-public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExposingOutput<StreamRecord<OUT>> {
+public class RecordWriterOutput<OUT> implements WatermarkGaugeExposingOutput<StreamRecord<OUT>> {
 
 	private RecordWriter<SerializationDelegate<StreamElement>> recordWriter;
 
@@ -82,7 +82,7 @@ public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExpo
 	@Override
 	public void collect(StreamRecord<OUT> record) {
 		if (this.outputTag != null) {
-			// we are only responsible for emitting to the main input
+			// we are not responsible for emitting to the main output.
 			return;
 		}
 
@@ -91,13 +91,9 @@ public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExpo
 
 	@Override
 	public <X> void collect(OutputTag<X> outputTag, StreamRecord<X> record) {
-		if (this.outputTag == null || !this.outputTag.equals(outputTag)) {
-			// we are only responsible for emitting to the side-output specified by our
-			// OutputTag.
-			return;
+		if (OutputTag.isResponsibleFor(this.outputTag, outputTag)) {
+			pushToRecordWriter(record);
 		}
-
-		pushToRecordWriter(record);
 	}
 
 	private <X> void pushToRecordWriter(StreamRecord<X> record) {
@@ -148,8 +144,8 @@ public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExpo
 		}
 	}
 
-	public void broadcastEvent(AbstractEvent event) throws IOException {
-		recordWriter.broadcastEvent(event);
+	public void broadcastEvent(AbstractEvent event, boolean isPriorityEvent) throws IOException {
+		recordWriter.broadcastEvent(event, isPriorityEvent);
 	}
 
 	public void flush() throws IOException {

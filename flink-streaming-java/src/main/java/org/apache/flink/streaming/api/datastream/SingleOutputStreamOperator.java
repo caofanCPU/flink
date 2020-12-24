@@ -21,15 +21,15 @@ import org.apache.flink.annotation.Public;
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.functions.InvalidTypesException;
 import org.apache.flink.api.common.operators.ResourceSpec;
+import org.apache.flink.api.common.operators.util.OperatorValidationUtils;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.streaming.api.collector.selector.OutputSelector;
+import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
+import org.apache.flink.streaming.api.transformations.PhysicalTransformation;
 import org.apache.flink.streaming.api.transformations.SideOutputTransformation;
-import org.apache.flink.streaming.api.transformations.StreamTransformation;
 import org.apache.flink.util.OutputTag;
-import org.apache.flink.util.Preconditions;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,11 +54,9 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 * we can catch the case when a side output with a matching id is requested for a different
 	 * type because this would lead to problems at runtime.
 	 */
-	private Map<OutputTag<?>, TypeInformation> requestedSideOutputs = new HashMap<>();
+	private Map<OutputTag<?>, TypeInformation<?>> requestedSideOutputs = new HashMap<>();
 
-	private boolean wasSplitApplied = false;
-
-	protected SingleOutputStreamOperator(StreamExecutionEnvironment environment, StreamTransformation<T> transformation) {
+	protected SingleOutputStreamOperator(StreamExecutionEnvironment environment, Transformation<T> transformation) {
 		super(environment, transformation);
 	}
 
@@ -138,9 +136,7 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 * @return The operator with set parallelism.
 	 */
 	public SingleOutputStreamOperator<T> setParallelism(int parallelism) {
-		Preconditions.checkArgument(canBeParallel() || parallelism == 1,
-				"The parallelism of non parallel operator must be 1.");
-
+		OperatorValidationUtils.validateParallelism(parallelism, canBeParallel());
 		transformation.setParallelism(parallelism);
 
 		return this;
@@ -157,12 +153,7 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 */
 	@PublicEvolving
 	public SingleOutputStreamOperator<T> setMaxParallelism(int maxParallelism) {
-		Preconditions.checkArgument(maxParallelism > 0,
-				"The maximum parallelism must be greater than 0.");
-
-		Preconditions.checkArgument(canBeParallel() || maxParallelism == 1,
-				"The maximum parallelism of non parallel operator must be 1.");
-
+		OperatorValidationUtils.validateMaxParallelism(maxParallelism, canBeParallel());
 		transformation.setMaxParallelism(maxParallelism);
 
 		return this;
@@ -182,11 +173,6 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 * @return The operator with set minimum and preferred resources.
 	 */
 	private SingleOutputStreamOperator<T> setResources(ResourceSpec minResources, ResourceSpec preferredResources) {
-		Preconditions.checkNotNull(minResources, "The min resources must be not null.");
-		Preconditions.checkNotNull(preferredResources, "The preferred resources must be not null.");
-		Preconditions.checkArgument(minResources.isValid() && preferredResources.isValid() && minResources.lessThanOrEqual(preferredResources),
-				"The values in resources must be not less than 0 and the preferred resources must be greater than the min resources.");
-
 		transformation.setResources(minResources, preferredResources);
 
 		return this;
@@ -199,9 +185,6 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 * @return The operator with set minimum and preferred resources.
 	 */
 	private SingleOutputStreamOperator<T> setResources(ResourceSpec resources) {
-		Preconditions.checkNotNull(resources, "The resources must be not null.");
-		Preconditions.checkArgument(resources.isValid(), "The values in resources must be not less than 0.");
-
 		transformation.setResources(resources, resources);
 
 		return this;
@@ -258,7 +241,11 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 */
 	@PublicEvolving
 	private SingleOutputStreamOperator<T> setChainingStrategy(ChainingStrategy strategy) {
-		this.transformation.setChainingStrategy(strategy);
+		if (transformation instanceof PhysicalTransformation) {
+			((PhysicalTransformation<T>) transformation).setChainingStrategy(strategy);
+		} else {
+			throw new UnsupportedOperationException("Cannot set chaining strategy on " + transformation);
+		}
 		return this;
 	}
 
@@ -389,17 +376,6 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 		return this;
 	}
 
-	@Override
-	public SplitStream<T> split(OutputSelector<T> outputSelector) {
-		if (requestedSideOutputs.isEmpty()) {
-			wasSplitApplied = true;
-			return super.split(outputSelector);
-		} else {
-			throw new UnsupportedOperationException("getSideOutput() and split() may not be called on the same DataStream. " +
-				"As a work-around, please add a no-op map function before the split() call.");
-		}
-	}
-
 	/**
 	 * Gets the {@link DataStream} that contains the elements that are emitted from an operation
 	 * into the side output with the given {@link OutputTag}.
@@ -407,11 +383,6 @@ public class SingleOutputStreamOperator<T> extends DataStream<T> {
 	 * @see org.apache.flink.streaming.api.functions.ProcessFunction.Context#output(OutputTag, Object)
 	 */
 	public <X> DataStream<X> getSideOutput(OutputTag<X> sideOutputTag) {
-		if (wasSplitApplied) {
-			throw new UnsupportedOperationException("getSideOutput() and split() may not be called on the same DataStream. " +
-				"As a work-around, please add a no-op map function before the split() call.");
-		}
-
 		sideOutputTag = clean(requireNonNull(sideOutputTag));
 
 		// make a defensive copy

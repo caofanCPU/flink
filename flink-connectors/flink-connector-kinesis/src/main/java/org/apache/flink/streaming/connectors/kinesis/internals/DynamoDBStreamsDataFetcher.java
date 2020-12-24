@@ -17,12 +17,17 @@
 
 package org.apache.flink.streaming.connectors.kinesis.internals;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.connectors.kinesis.KinesisShardAssigner;
-import org.apache.flink.streaming.connectors.kinesis.metrics.ShardMetricsReporter;
+import org.apache.flink.streaming.connectors.kinesis.internals.publisher.RecordPublisher;
+import org.apache.flink.streaming.connectors.kinesis.internals.publisher.RecordPublisherFactory;
+import org.apache.flink.streaming.connectors.kinesis.internals.publisher.polling.PollingRecordPublisherFactory;
 import org.apache.flink.streaming.connectors.kinesis.model.DynamoDBStreamsShardHandle;
 import org.apache.flink.streaming.connectors.kinesis.model.SequenceNumber;
+import org.apache.flink.streaming.connectors.kinesis.model.StartingPosition;
 import org.apache.flink.streaming.connectors.kinesis.model.StreamShardHandle;
 import org.apache.flink.streaming.connectors.kinesis.proxy.DynamoDBStreamsProxy;
 import org.apache.flink.streaming.connectors.kinesis.serialization.KinesisDeserializationSchema;
@@ -37,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * @param <T> type of fetched data.
  */
 public class DynamoDBStreamsDataFetcher<T> extends KinesisDataFetcher<T> {
-	private boolean shardIdFormatCheck = false;
+	private final RecordPublisherFactory recordPublisherFactory;
 
 	/**
 	 * Constructor.
@@ -56,6 +61,17 @@ public class DynamoDBStreamsDataFetcher<T> extends KinesisDataFetcher<T> {
 		KinesisDeserializationSchema<T> deserializationSchema,
 		KinesisShardAssigner shardAssigner) {
 
+		this(streams, sourceContext, runtimeContext, configProps, deserializationSchema, shardAssigner, DynamoDBStreamsProxy::create);
+	}
+
+	@VisibleForTesting
+	DynamoDBStreamsDataFetcher(List<String> streams,
+		SourceFunction.SourceContext<T> sourceContext,
+		RuntimeContext runtimeContext,
+		Properties configProps,
+		KinesisDeserializationSchema<T> deserializationSchema,
+		KinesisShardAssigner shardAssigner,
+		FlinkKinesisProxyFactory flinkKinesisProxyFactory) {
 		super(streams,
 			sourceContext,
 			sourceContext.getCheckpointLock(),
@@ -64,11 +80,14 @@ public class DynamoDBStreamsDataFetcher<T> extends KinesisDataFetcher<T> {
 			deserializationSchema,
 			shardAssigner,
 			null,
+			null,
 			new AtomicReference<>(),
 			new ArrayList<>(),
 			createInitialSubscribedStreamsToLastDiscoveredShardsState(streams),
-			// use DynamoDBStreamsProxy
-			DynamoDBStreamsProxy::create);
+			flinkKinesisProxyFactory,
+			null);
+
+		this.recordPublisherFactory = new PollingRecordPublisherFactory(flinkKinesisProxyFactory);
 	}
 
 	@Override
@@ -82,28 +101,13 @@ public class DynamoDBStreamsDataFetcher<T> extends KinesisDataFetcher<T> {
 		return true;
 	}
 
-	/**
-	 * Create a new DynamoDB streams shard consumer.
-	 *
-	 * @param subscribedShardStateIndex the state index of the shard this consumer is subscribed to
-	 * @param handle stream handle
-	 * @param lastSeqNum last sequence number
-	 * @param shardMetricsReporter the reporter to report metrics to
-	 * @return
-	 */
 	@Override
-	protected ShardConsumer createShardConsumer(
-		Integer subscribedShardStateIndex,
-		StreamShardHandle handle,
-		SequenceNumber lastSeqNum,
-		ShardMetricsReporter shardMetricsReporter) {
-
-		return new ShardConsumer(
-			this,
-			subscribedShardStateIndex,
-			handle,
-			lastSeqNum,
-			DynamoDBStreamsProxy.create(getConsumerConfiguration()),
-			shardMetricsReporter);
+	protected RecordPublisher createRecordPublisher(
+		SequenceNumber sequenceNumber,
+		Properties configProps, MetricGroup metricGroup,
+		StreamShardHandle subscribedShard) throws InterruptedException {
+		StartingPosition startingPosition = StartingPosition.continueFromSequenceNumber(sequenceNumber);
+		return recordPublisherFactory.create(startingPosition, getConsumerConfiguration(), metricGroup, subscribedShard);
 	}
+
 }

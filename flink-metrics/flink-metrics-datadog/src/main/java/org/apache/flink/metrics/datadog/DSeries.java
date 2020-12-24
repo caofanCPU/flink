@@ -18,6 +18,10 @@
 
 package org.apache.flink.metrics.datadog;
 
+import org.apache.flink.annotation.VisibleForTesting;
+
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonGetter;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,20 +29,24 @@ import java.util.List;
  * Json serialization between Flink and Datadog.
  */
 public class DSeries {
-	/**
-	 * Names of series field and its getters must not be changed
-	 * since they are mapped to json objects in a Datadog-defined format.
-	 */
-	private List<DMetric> series;
+	@VisibleForTesting
+	static final String FIELD_NAME_SERIES = "series";
+
+	private final List<DMetric> series;
 
 	public DSeries() {
 		series = new ArrayList<>();
 	}
 
-	public void addMetric(DMetric metric) {
+	public DSeries(List<DMetric> series) {
+		this.series = series;
+	}
+
+	public void add(DMetric metric) {
 		series.add(metric);
 	}
 
+	@JsonGetter(FIELD_NAME_SERIES)
 	public List<DMetric> getSeries() {
 		return series;
 	}

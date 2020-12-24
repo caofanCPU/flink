@@ -20,15 +20,16 @@ package org.apache.flink.test.checkpointing;
 
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.contrib.streaming.state.RocksDBStateBackend;
 import org.apache.flink.runtime.state.AbstractStateBackend;
-import org.apache.flink.runtime.state.CheckpointListener;
 import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
@@ -88,7 +89,7 @@ public class KeyedStateCheckpointingITCase extends TestLogger {
 
 	private static Configuration getConfiguration() {
 		Configuration config = new Configuration();
-		config.setString(TaskManagerOptions.MANAGED_MEMORY_SIZE, "12m");
+		config.set(TaskManagerOptions.MANAGED_MEMORY_SIZE, MemorySize.parse("12m"));
 		return config;
 	}
 
@@ -145,8 +146,7 @@ public class KeyedStateCheckpointingITCase extends TestLogger {
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(PARALLELISM);
 		env.enableCheckpointing(500);
-		env.getConfig().disableSysoutLogging();
-		env.setRestartStrategy(RestartStrategies.fixedDelayRestart(Integer.MAX_VALUE, 0L));
+				env.setRestartStrategy(RestartStrategies.fixedDelayRestart(Integer.MAX_VALUE, 0L));
 
 		env.setStateBackend(stateBackend);
 
@@ -264,6 +264,10 @@ public class KeyedStateCheckpointingITCase extends TestLogger {
 				checkpointHappened = true;
 				this.notifyAll();
 			}
+		}
+
+		@Override
+		public void notifyCheckpointAborted(long checkpointId) {
 		}
 	}
 

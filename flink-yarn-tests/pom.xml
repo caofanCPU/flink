@@ -23,7 +23,7 @@ under the License.
 	<parent>
 		<groupId>org.apache.flink</groupId>
 		<artifactId>flink-parent</artifactId>
-		<version>1.9-SNAPSHOT</version>
+		<version>1.13-SNAPSHOT</version>
 		<relativePath>..</relativePath>
 	</parent>
 
@@ -33,8 +33,8 @@ under the License.
 	We need the YARN fat jar build by flink-dist for the tests.
 	-->
 	
-	<artifactId>flink-yarn-tests_${scala.binary.version}</artifactId>
-	<name>flink-yarn-tests</name>
+	<artifactId>flink-yarn-tests</artifactId>
+	<name>Flink : Yarn Tests</name>
 	<packaging>jar</packaging>
 
 	<dependencies>
@@ -44,12 +44,6 @@ under the License.
 		<dependency>
 			<groupId>org.apache.flink</groupId>
 			<artifactId>flink-test-utils-junit</artifactId>
-		</dependency>
-		
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-shaded-jackson</artifactId>
-			<scope>test</scope>
 		</dependency>
 		
 		<dependency>
@@ -125,27 +119,72 @@ under the License.
 		</dependency>
 
 		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-shaded-hadoop2</artifactId>
-			<version>${hadoop.version}-${project.version}</version>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-common</artifactId>
+			<version>${hadoop.version}</version>
 			<scope>test</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-shaded-hadoop2-uber</artifactId>
-			<version>${hadoop.version}-${project.version}</version>
-			<scope>test</scope>
-		</dependency>
-
-		<dependency>
-			<groupId>org.apache.flink</groupId>
-			<artifactId>flink-shaded-yarn-tests</artifactId>
-			<version>${project.version}</version>
 			<exclusions>
 				<exclusion>
-					<groupId>asm</groupId>
-					<artifactId>asm</artifactId>
+					<groupId>log4j</groupId>
+					<artifactId>log4j</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-log4j12</artifactId>
+				</exclusion>
+				<exclusion>
+					<!-- This dependency is no longer shipped with the JDK since Java 9.-->
+					<groupId>jdk.tools</groupId>
+					<artifactId>jdk.tools</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-yarn-client</artifactId>
+			<version>${hadoop.version}</version>
+			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>log4j</groupId>
+					<artifactId>log4j</artifactId>
+				</exclusion>
+				<exclusion>
+					<!-- This dependency is no longer shipped with the JDK since Java 9.-->
+					<groupId>jdk.tools</groupId>
+					<artifactId>jdk.tools</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-yarn-api</artifactId>
+			<version>${hadoop.version}</version>
+			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<!-- This dependency is no longer shipped with the JDK since Java 9.-->
+					<groupId>jdk.tools</groupId>
+					<artifactId>jdk.tools</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-minicluster</artifactId>
+			<version>${hadoop.version}</version>
+			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>log4j</groupId>
+					<artifactId>log4j</artifactId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-log4j12</artifactId>
 				</exclusion>
 			</exclusions>
 		</dependency>
@@ -154,6 +193,13 @@ under the License.
 			<groupId>org.apache.hadoop</groupId>
 			<artifactId>hadoop-minikdc</artifactId>
 			<version>${minikdc.version}</version>
+			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-log4j12</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 
 	</dependencies>
@@ -268,7 +314,6 @@ under the License.
 			<plugin>
 				<groupId>org.codehaus.mojo</groupId>
 				<artifactId>build-helper-maven-plugin</artifactId>
-				<version>1.7</version>
 				<executions>
 					<!-- Add src/main/scala to eclipse build path -->
 					<execution>
@@ -327,7 +372,6 @@ under the License.
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-dependency-plugin</artifactId>
-				<version>3.0.1</version>
 				<executions>
 					<execution>
 						<id>copy</id>
@@ -335,47 +379,53 @@ under the License.
 						<goals>
 							<goal>copy</goal>
 						</goals>
+						<configuration>
+							<artifactItems>
+								<artifactItem>
+									<groupId>org.apache.flink</groupId>
+									<artifactId>flink-examples-batch_${scala.binary.version}</artifactId>
+									<type>jar</type>
+									<classifier>WordCount</classifier>
+									<overWrite>true</overWrite>
+									<destFileName>BatchWordCount.jar</destFileName>
+								</artifactItem>
+								<artifactItem>
+									<groupId>org.apache.flink</groupId>
+									<artifactId>flink-examples-streaming_${scala.binary.version}</artifactId>
+									<type>jar</type>
+									<classifier>WordCount</classifier>
+									<overWrite>true</overWrite>
+									<destFileName>StreamingWordCount.jar</destFileName>
+								</artifactItem>
+								<artifactItem>
+									<groupId>org.apache.flink</groupId>
+									<artifactId>flink-examples-streaming_${scala.binary.version}</artifactId>
+									<type>jar</type>
+									<classifier>WindowJoin</classifier>
+									<overWrite>true</overWrite>
+									<destFileName>WindowJoin.jar</destFileName>
+								</artifactItem>
+							</artifactItems>
+							<outputDirectory>${project.build.directory}/programs</outputDirectory>
+							<overWriteReleases>false</overWriteReleases>
+							<overWriteSnapshots>true</overWriteSnapshots>
+						</configuration>
+					</execution>
+					<!-- Write classpath of flink-yarn-tests to a file, so that the yarn tests can use it as their classpath
+						for the YARN "containers".
+					-->
+					<execution>
+						<id>store-classpath-in-target-for-tests</id>
+						<phase>package</phase>
+						<goals>
+							<goal>build-classpath</goal>
+						</goals>
+						<configuration>
+							<outputFile>${project.build.directory}/yarn.classpath</outputFile>
+							<excludeGroupIds>org.apache.flink</excludeGroupIds>
+						</configuration>
 					</execution>
 				</executions>
-				<configuration>
-					<artifactItems>
-						<artifactItem>
-							<groupId>org.apache.flink</groupId>
-							<artifactId>flink-shaded-hadoop2-uber</artifactId>
-							<version>${hadoop.version}-${project.version}</version>
-							<type>jar</type>
-							<overWrite>true</overWrite>
-							<outputDirectory>${project.build.directory}/shaded-hadoop</outputDirectory>
-						</artifactItem>
-						<artifactItem>
-							<groupId>org.apache.flink</groupId>
-							<artifactId>flink-examples-batch_${scala.binary.version}</artifactId>
-							<type>jar</type>
-							<classifier>WordCount</classifier>
-							<overWrite>true</overWrite>
-							<destFileName>BatchWordCount.jar</destFileName>
-						</artifactItem>
-						<artifactItem>
-							<groupId>org.apache.flink</groupId>
-							<artifactId>flink-examples-streaming_${scala.binary.version}</artifactId>
-							<type>jar</type>
-							<classifier>WordCount</classifier>
-							<overWrite>true</overWrite>
-							<destFileName>StreamingWordCount.jar</destFileName>
-						</artifactItem>
-						<artifactItem>
-							<groupId>org.apache.flink</groupId>
-							<artifactId>flink-examples-streaming_${scala.binary.version}</artifactId>
-							<type>jar</type>
-							<classifier>WindowJoin</classifier>
-							<overWrite>true</overWrite>
-							<destFileName>WindowJoin.jar</destFileName>
-						</artifactItem>
-					</artifactItems>
-					<outputDirectory>${project.build.directory}/programs</outputDirectory>
-					<overWriteReleases>false</overWriteReleases>
-					<overWriteSnapshots>true</overWriteSnapshots>
-				</configuration>
 			</plugin>
 		</plugins>
 	</build>

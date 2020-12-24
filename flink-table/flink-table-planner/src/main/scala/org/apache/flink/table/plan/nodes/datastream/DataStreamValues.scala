@@ -24,9 +24,9 @@ import org.apache.calcite.rel.RelNode
 import org.apache.calcite.rel.core.Values
 import org.apache.calcite.rex.RexLiteral
 import org.apache.flink.streaming.api.datastream.DataStream
-import org.apache.flink.table.api.{StreamQueryConfig, StreamTableEnvImpl}
 import org.apache.flink.table.codegen.InputFormatCodeGenerator
 import org.apache.flink.table.plan.schema.RowSchema
+import org.apache.flink.table.planner.StreamPlanner
 import org.apache.flink.table.runtime.io.CRowValuesInputFormat
 import org.apache.flink.table.runtime.types.{CRow, CRowTypeInfo}
 
@@ -56,11 +56,9 @@ class DataStreamValues(
     )
   }
 
-  override def translateToPlan(
-      tableEnv: StreamTableEnvImpl,
-      queryConfig: StreamQueryConfig): DataStream[CRow] = {
+  override def translateToPlan(planner: StreamPlanner): DataStream[CRow] = {
 
-    val config = tableEnv.getConfig
+    val config = planner.getConfig
 
     val returnType = CRowTypeInfo(schema.typeInfo)
     val generator = new InputFormatCodeGenerator(config)
@@ -84,7 +82,7 @@ class DataStreamValues(
       generatedFunction.code,
       returnType)
 
-    tableEnv.execEnv.createInput(inputFormat, returnType)
+    planner.getExecutionEnvironment.createInput(inputFormat, returnType)
   }
 
 }

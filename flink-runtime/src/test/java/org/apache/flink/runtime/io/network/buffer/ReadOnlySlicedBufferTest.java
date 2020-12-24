@@ -51,7 +51,7 @@ public class ReadOnlySlicedBufferTest {
 	@Before
 	public void setUp() throws Exception {
 		final MemorySegment segment = MemorySegmentFactory.allocateUnpooledSegment(BUFFER_SIZE);
-		buffer = new NetworkBuffer(segment, FreeingBufferRecycler.INSTANCE, true, 0);
+		buffer = new NetworkBuffer(segment, FreeingBufferRecycler.INSTANCE, Buffer.DataType.DATA_BUFFER, 0);
 		for (int i = 0; i < DATA_SIZE; ++i) {
 			buffer.writeByte(i);
 		}
@@ -61,19 +61,19 @@ public class ReadOnlySlicedBufferTest {
 	public void testForwardsIsBuffer() throws IOException {
 		assertEquals(buffer.isBuffer(), buffer.readOnlySlice().isBuffer());
 		assertEquals(buffer.isBuffer(), buffer.readOnlySlice(1, 2).isBuffer());
-		Buffer eventBuffer = EventSerializer.toBuffer(EndOfPartitionEvent.INSTANCE);
+		Buffer eventBuffer = EventSerializer.toBuffer(EndOfPartitionEvent.INSTANCE, false);
 		assertEquals(eventBuffer.isBuffer(), eventBuffer.readOnlySlice().isBuffer());
 		assertEquals(eventBuffer.isBuffer(), eventBuffer.readOnlySlice(1, 2).isBuffer());
 	}
 
 	@Test(expected = ReadOnlyBufferException.class)
-	public void testTagAsEventThrows1() {
-		buffer.readOnlySlice().tagAsEvent();
+	public void testSetDataTypeThrows1() {
+		buffer.readOnlySlice().setDataType(Buffer.DataType.EVENT_BUFFER);
 	}
 
 	@Test(expected = ReadOnlyBufferException.class)
-	public void testTagAsEventThrows2() {
-		buffer.readOnlySlice(1, 2).tagAsEvent();
+	public void testSetDataTypeThrows2() {
+		buffer.readOnlySlice(1, 2).setDataType(Buffer.DataType.EVENT_BUFFER);
 	}
 
 	@Test
@@ -233,8 +233,7 @@ public class ReadOnlySlicedBufferTest {
 	/**
 	 * Tests the independence of the writer index via
 	 * {@link ReadOnlySlicedNetworkBuffer#setSize(int)},
-	 * {@link ReadOnlySlicedNetworkBuffer#getSize()}, and
-	 * {@link ReadOnlySlicedNetworkBuffer#getSizeUnsafe()}.
+	 * {@link ReadOnlySlicedNetworkBuffer#getSize()}.
 	 */
 	@Test
 	public void testGetSetSize1() {
@@ -244,8 +243,7 @@ public class ReadOnlySlicedBufferTest {
 	/**
 	 * Tests the independence of the writer index via
 	 * {@link ReadOnlySlicedNetworkBuffer#setSize(int)},
-	 * {@link ReadOnlySlicedNetworkBuffer#getSize()}, and
-	 * {@link ReadOnlySlicedNetworkBuffer#getSizeUnsafe()}.
+	 * {@link ReadOnlySlicedNetworkBuffer#getSize()}.
 	 */
 	@Test
 	public void testGetSetSize2() {
@@ -254,14 +252,10 @@ public class ReadOnlySlicedBufferTest {
 
 	private void testGetSetSize(ReadOnlySlicedNetworkBuffer slice, int sliceSize) {
 		assertEquals(DATA_SIZE, buffer.getSize());
-		assertEquals(DATA_SIZE, buffer.getSizeUnsafe());
 		assertEquals(sliceSize, slice.getSize());
-		assertEquals(sliceSize, slice.getSizeUnsafe());
 		buffer.setSize(DATA_SIZE + 1);
 		assertEquals(DATA_SIZE + 1, buffer.getSize());
-		assertEquals(DATA_SIZE + 1, buffer.getSizeUnsafe());
 		assertEquals(sliceSize, slice.getSize());
-		assertEquals(sliceSize, slice.getSizeUnsafe());
 	}
 
 	@Test

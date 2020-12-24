@@ -20,11 +20,12 @@ package org.apache.flink.table.api.stream.sql
 
 import org.apache.flink.api.java.typeutils.GenericTypeInfo
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.Types
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api.Expressions.$
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.CommonTestData.NonPojo
-import org.apache.flink.table.utils.TableTestUtil._
 import org.apache.flink.table.utils.TableTestBase
+import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 class UnionTest extends TableTestBase {
@@ -32,19 +33,20 @@ class UnionTest extends TableTestBase {
   @Test
   def testUnionAllNullableCompositeType() = {
     val streamUtil = streamTestUtil()
-    streamUtil.addTable[((Int, String), (Int, String), Int)]("A", 'a, 'b, 'c)
+    val table = streamUtil.addTable[((Int, String), (Int, String), Int)]("A", 'a, 'b, 'c)
 
     val expected = binaryNode(
       "DataStreamUnion",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "a")
       ),
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
-        term("select", "CASE(>(c, 0), b, null) AS EXPR$0")
+        streamTableNode(table),
+        term("select", "CASE(>(c, 0), b, null:RecordType:peek_no_expand(INTEGER _1, " +
+          "VARCHAR(65536) _2)) AS EXPR$0")
       ),
       term("all", "true"),
       term("union all", "a")
@@ -62,18 +64,18 @@ class UnionTest extends TableTestBase {
     val typeInfo = Types.ROW(
       new GenericTypeInfo(classOf[NonPojo]),
       new GenericTypeInfo(classOf[NonPojo]))
-    streamUtil.addJavaTable(typeInfo, "A", "a, b")
+    val table = streamUtil.addJavaTable(typeInfo, "A", $("a"), $("b"))
 
     val expected = binaryNode(
       "DataStreamUnion",
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "a")
       ),
       unaryNode(
         "DataStreamCalc",
-        streamTableNode(0),
+        streamTableNode(table),
         term("select", "b")
       ),
       term("all", "true"),

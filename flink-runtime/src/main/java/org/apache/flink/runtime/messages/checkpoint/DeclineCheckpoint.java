@@ -19,14 +19,10 @@
 package org.apache.flink.runtime.messages.checkpoint;
 
 import org.apache.flink.api.common.JobID;
-import org.apache.flink.runtime.checkpoint.decline.AlignmentLimitExceededException;
-import org.apache.flink.runtime.checkpoint.decline.CheckpointDeclineOnCancellationBarrierException;
-import org.apache.flink.runtime.checkpoint.decline.CheckpointDeclineSubsumedException;
-import org.apache.flink.runtime.checkpoint.decline.CheckpointDeclineTaskNotCheckpointingException;
-import org.apache.flink.runtime.checkpoint.decline.CheckpointDeclineTaskNotReadyException;
-import org.apache.flink.runtime.checkpoint.decline.InputEndOfStreamException;
 import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 import org.apache.flink.util.SerializedThrowable;
+
+import javax.annotation.Nullable;
 
 /**
  * This message is sent from the {@link org.apache.flink.runtime.taskexecutor.TaskExecutor} to the
@@ -39,28 +35,18 @@ public class DeclineCheckpoint extends AbstractCheckpointMessage implements java
 	private static final long serialVersionUID = 2094094662279578953L;
 
 	/** The reason why the checkpoint was declined. */
-	private final Throwable reason;
+	@Nullable
+	private final SerializedThrowable reason;
 
 	public DeclineCheckpoint(JobID job, ExecutionAttemptID taskExecutionId, long checkpointId) {
 		this(job, taskExecutionId, checkpointId, null);
 	}
 
-	public DeclineCheckpoint(JobID job, ExecutionAttemptID taskExecutionId, long checkpointId, Throwable reason) {
+	public DeclineCheckpoint(JobID job, ExecutionAttemptID taskExecutionId, long checkpointId, @Nullable Throwable reason) {
 		super(job, taskExecutionId, checkpointId);
 
-		if (reason == null ||
-			reason.getClass() == AlignmentLimitExceededException.class ||
-			reason.getClass() == CheckpointDeclineOnCancellationBarrierException.class ||
-			reason.getClass() == CheckpointDeclineSubsumedException.class ||
-			reason.getClass() == CheckpointDeclineTaskNotCheckpointingException.class ||
-			reason.getClass() == CheckpointDeclineTaskNotReadyException.class ||
-			reason.getClass() == InputEndOfStreamException.class) {
-			// null or known common exceptions that cannot reference any dynamically loaded code
-			this.reason = reason;
-		} else {
-			// some other exception. replace with a serialized throwable, to be on the safe side
-			this.reason = new SerializedThrowable(reason);
-		}
+		// some other exception. replace with a serialized throwable, to be on the safe side
+		this.reason = reason == null ? null : new SerializedThrowable(reason);
 	}
 
 	// --------------------------------------------------------------------------------------------
@@ -70,7 +56,7 @@ public class DeclineCheckpoint extends AbstractCheckpointMessage implements java
 	 *
 	 * @return The reason why the checkpoint was declined
 	 */
-	public Throwable getReason() {
+	public SerializedThrowable getReason() {
 		return reason;
 	}
 

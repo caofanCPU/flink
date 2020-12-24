@@ -19,10 +19,11 @@
 package org.apache.flink.table.api.batch.sql
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.runtime.utils.JavaUserDefinedTableFunctions.JavaVarsArgTableFunc0
 import org.apache.flink.table.utils.TableTestUtil._
-import org.apache.flink.table.utils.{HierarchyTableFunction, PojoTableFunc, TableFunc2, _}
+import org.apache.flink.table.utils._
+
 import org.junit.Test
 
 class CorrelateTest extends TableTestBase {
@@ -31,7 +32,7 @@ class CorrelateTest extends TableTestBase {
   def testCrossJoin(): Unit = {
     val util = batchTestUtil()
     val func1 = new TableFunc1
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func1", func1)
 
     val sqlQuery = "SELECT c, s FROM MyTable, LATERAL TABLE(func1(c)) AS T(s)"
@@ -40,7 +41,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func1($cor0.c)"),
         term("correlate", s"table(func1($$cor0.c))"),
         term("select", "a", "b", "c", "f0"),
@@ -61,7 +62,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func1($cor0.c, '$')"),
         term("correlate", s"table(func1($$cor0.c, '$$'))"),
         term("select", "a", "b", "c", "f0"),
@@ -79,7 +80,7 @@ class CorrelateTest extends TableTestBase {
   def testLeftOuterJoinWithLiteralTrue(): Unit = {
     val util = batchTestUtil()
     val func1 = new TableFunc1
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func1", func1)
 
     val sqlQuery = "SELECT c, s FROM MyTable LEFT JOIN LATERAL TABLE(func1(c)) AS T(s) ON TRUE"
@@ -88,7 +89,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func1($cor0.c)"),
         term("correlate", s"table(func1($$cor0.c))"),
         term("select", "a", "b", "c", "f0"),
@@ -106,8 +107,8 @@ class CorrelateTest extends TableTestBase {
   def testLeftOuterJoinAsSubQuery(): Unit = {
     val util = batchTestUtil()
     val func1 = new TableFunc1
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
-    util.addTable[(Int, Long, String)]("MyTable2", 'a2, 'b2, 'c2)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table1 = util.addTable[(Int, Long, String)]("MyTable2", 'a2, 'b2, 'c2)
     util.addFunction("func1", func1)
 
     val sqlQuery =
@@ -120,12 +121,12 @@ class CorrelateTest extends TableTestBase {
 
     val expected = binaryNode(
       "DataSetJoin",
-      batchTableNode(1),
+      batchTableNode(table1),
       unaryNode(
         "DataSetCalc",
         unaryNode(
          "DataSetCorrelate",
-          batchTableNode(0),
+          batchTableNode(table),
           term("invocation", "func1($cor0.c)"),
           term("correlate", "table(func1($cor0.c))"),
           term("select", "a", "b", "c", "f0"),
@@ -146,7 +147,7 @@ class CorrelateTest extends TableTestBase {
   def testCustomType(): Unit = {
     val util = batchTestUtil()
     val func2 = new TableFunc2
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func2", func2)
 
     val sqlQuery = "SELECT c, name, len FROM MyTable, LATERAL TABLE(func2(c)) AS T(name, len)"
@@ -155,7 +156,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func2($cor0.c)"),
         term("correlate", s"table(func2($$cor0.c))"),
         term("select", "a", "b", "c", "f0", "f1"),
@@ -173,7 +174,7 @@ class CorrelateTest extends TableTestBase {
   @Test
   def testHierarchyType(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     val function = new HierarchyTableFunction
     util.addFunction("hierarchy", function)
 
@@ -183,7 +184,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "hierarchy($cor0.c)"),
         term("correlate", s"table(hierarchy($$cor0.c))"),
         term("select", "a", "b", "c", "f0", "f1", "f2"),
@@ -201,7 +202,7 @@ class CorrelateTest extends TableTestBase {
   @Test
   def testPojoType(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     val function = new PojoTableFunc
     util.addFunction("pojo", function)
 
@@ -211,7 +212,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "pojo($cor0.c)"),
         term("correlate", s"table(pojo($$cor0.c))"),
         term("select", "a", "b", "c", "age", "name"),
@@ -230,7 +231,7 @@ class CorrelateTest extends TableTestBase {
   def testFilter(): Unit = {
     val util = batchTestUtil()
     val func2 = new TableFunc2
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func2", func2)
 
     val sqlQuery = "SELECT c, name, len FROM MyTable, LATERAL TABLE(func2(c)) AS T(name, len) " +
@@ -240,7 +241,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func2($cor0.c)"),
         term("correlate", s"table(func2($$cor0.c))"),
         term("select", "a", "b", "c", "f0", "f1"),
@@ -260,7 +261,7 @@ class CorrelateTest extends TableTestBase {
   def testScalarFunction(): Unit = {
     val util = batchTestUtil()
     val func1 = new TableFunc1
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func1", func1)
 
     val sqlQuery = "SELECT c, s FROM MyTable, LATERAL TABLE(func1(SUBSTRING(c, 2))) AS T(s)"
@@ -269,7 +270,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func1(SUBSTRING($cor0.c, 2))"),
         term("correlate", s"table(func1(SUBSTRING($$cor0.c, 2)))"),
         term("select", "a", "b", "c", "f0"),
@@ -287,7 +288,7 @@ class CorrelateTest extends TableTestBase {
   def testTableFunctionWithVariableArguments(): Unit = {
     val util = batchTestUtil()
     val func1 = new JavaVarsArgTableFunc0
-    util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
+    val table = util.addTable[(Int, Long, String)]("MyTable", 'a, 'b, 'c)
     util.addFunction("func1", func1)
 
     var sqlQuery = "SELECT c, s FROM MyTable, LATERAL TABLE(func1('hello', 'world', c)) AS T(s)"
@@ -296,7 +297,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func1('hello', 'world', $cor0.c)"),
         term("correlate", s"table(func1('hello', 'world', $$cor0.c))"),
         term("select", "a", "b", "c", "f0"),
@@ -319,7 +320,7 @@ class CorrelateTest extends TableTestBase {
       "DataSetCalc",
       unaryNode(
         "DataSetCorrelate",
-        batchTableNode(0),
+        batchTableNode(table),
         term("invocation", "func2('hello', 'world', $cor0.c)"),
         term("correlate", s"table(func2('hello', 'world', $$cor0.c))"),
         term("select", "a", "b", "c", "f0"),

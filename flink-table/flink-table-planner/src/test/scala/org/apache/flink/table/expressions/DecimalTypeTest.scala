@@ -19,11 +19,11 @@
 package org.apache.flink.table.expressions
 
 import org.apache.flink.api.common.typeinfo.TypeInformation
-import org.apache.flink.types.Row
 import org.apache.flink.api.java.typeutils.RowTypeInfo
-import org.apache.flink.table.api.Types
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.expressions.utils.ExpressionTestBase
+import org.apache.flink.types.Row
+
 import org.junit.Test
 
 class DecimalTypeTest extends ExpressionTestBase {
@@ -179,7 +179,7 @@ class DecimalTypeTest extends ExpressionTestBase {
 
     // implicit cast to decimal
     testAllApis(
-      Literal(12) + 'f1,
+      12.toExpr + 'f1,
       "12 + f1",
       "12 + f1",
       "123456789123456789123456801")

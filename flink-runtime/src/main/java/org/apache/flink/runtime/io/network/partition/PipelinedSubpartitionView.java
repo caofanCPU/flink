@@ -29,7 +29,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * View over a pipelined in-memory only subpartition.
  */
-class PipelinedSubpartitionView implements ResultSubpartitionView {
+public class PipelinedSubpartitionView implements ResultSubpartitionView {
 
 	/** The subpartition this view belongs to. */
 	private final PipelinedSubpartition parent;
@@ -37,9 +37,9 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	private final BufferAvailabilityListener availabilityListener;
 
 	/** Flag indicating whether this view has been released. */
-	private final AtomicBoolean isReleased;
+	final AtomicBoolean isReleased;
 
-	PipelinedSubpartitionView(PipelinedSubpartition parent, BufferAvailabilityListener listener) {
+	public PipelinedSubpartitionView(PipelinedSubpartition parent, BufferAvailabilityListener listener) {
 		this.parent = checkNotNull(parent);
 		this.availabilityListener = checkNotNull(listener);
 		this.isReleased = new AtomicBoolean();
@@ -57,8 +57,8 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	}
 
 	@Override
-	public void notifySubpartitionConsumed() {
-		releaseAllResources();
+	public void notifyPriorityEvent(int priorityBufferNumber) {
+		availabilityListener.notifyPriorityEvent(priorityBufferNumber);
 	}
 
 	@Override
@@ -76,13 +76,13 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	}
 
 	@Override
-	public boolean nextBufferIsEvent() {
-		return parent.nextBufferIsEvent();
+	public void resumeConsumption() {
+		parent.resumeConsumption();
 	}
 
 	@Override
-	public boolean isAvailable() {
-		return parent.isAvailable();
+	public boolean isAvailable(int numCreditsAvailable) {
+		return parent.isAvailable(numCreditsAvailable);
 	}
 
 	@Override
@@ -91,9 +91,15 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 	}
 
 	@Override
+	public int unsynchronizedGetNumberOfQueuedBuffers() {
+		return parent.unsynchronizedGetNumberOfQueuedBuffers();
+	}
+
+	@Override
 	public String toString() {
-		return String.format("PipelinedSubpartitionView(index: %d) of ResultPartition %s",
-				parent.index,
-				parent.parent.getPartitionId());
+		return String.format("%s(index: %d) of ResultPartition %s",
+			this.getClass().getSimpleName(),
+			parent.getSubPartitionIndex(),
+			parent.parent.getPartitionId());
 	}
 }

@@ -18,34 +18,37 @@
 
 package org.apache.flink.runtime.dispatcher;
 
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.common.JobStatus;
+import org.apache.flink.api.common.operators.ResourceSpec;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.blob.BlobServer;
 import org.apache.flink.runtime.checkpoint.Checkpoints;
+import org.apache.flink.runtime.client.DuplicateJobSubmissionException;
+import org.apache.flink.runtime.client.JobInitializationException;
 import org.apache.flink.runtime.client.JobSubmissionException;
+import org.apache.flink.runtime.clusterframework.ApplicationStatus;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
 import org.apache.flink.runtime.concurrent.FutureUtils;
+import org.apache.flink.runtime.entrypoint.ClusterEntryPointExceptionUtils;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionGraph;
 import org.apache.flink.runtime.heartbeat.HeartbeatServices;
 import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.highavailability.RunningJobsRegistry;
 import org.apache.flink.runtime.jobgraph.JobGraph;
-import org.apache.flink.runtime.jobgraph.JobStatus;
+import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
-import org.apache.flink.runtime.jobmanager.SubmittedJobGraph;
-import org.apache.flink.runtime.jobmanager.SubmittedJobGraphStore;
+import org.apache.flink.runtime.jobgraph.OperatorID;
+import org.apache.flink.runtime.jobmanager.JobGraphWriter;
 import org.apache.flink.runtime.jobmaster.JobManagerRunner;
 import org.apache.flink.runtime.jobmaster.JobManagerSharedServices;
 import org.apache.flink.runtime.jobmaster.JobMasterGateway;
 import org.apache.flink.runtime.jobmaster.JobNotFinishedException;
 import org.apache.flink.runtime.jobmaster.JobResult;
 import org.apache.flink.runtime.jobmaster.factories.DefaultJobManagerJobMetricGroupFactory;
-import org.apache.flink.runtime.leaderelection.LeaderContender;
-import org.apache.flink.runtime.leaderelection.LeaderElectionService;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.messages.FlinkJobNotFoundException;
 import org.apache.flink.runtime.messages.webmonitor.ClusterOverview;
@@ -54,21 +57,22 @@ import org.apache.flink.runtime.messages.webmonitor.JobsOverview;
 import org.apache.flink.runtime.messages.webmonitor.MultipleJobsDetails;
 import org.apache.flink.runtime.metrics.MetricNames;
 import org.apache.flink.runtime.metrics.groups.JobManagerMetricGroup;
+import org.apache.flink.runtime.operators.coordination.CoordinationRequest;
+import org.apache.flink.runtime.operators.coordination.CoordinationResponse;
 import org.apache.flink.runtime.resourcemanager.ResourceManagerGateway;
 import org.apache.flink.runtime.resourcemanager.ResourceOverview;
 import org.apache.flink.runtime.rest.handler.legacy.backpressure.OperatorBackPressureStatsResponse;
 import org.apache.flink.runtime.rpc.FatalErrorHandler;
-import org.apache.flink.runtime.rpc.FencedRpcEndpoint;
+import org.apache.flink.runtime.rpc.PermanentlyFencedRpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
+import org.apache.flink.runtime.rpc.akka.AkkaRpcServiceUtils;
 import org.apache.flink.runtime.webmonitor.retriever.GatewayRetriever;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.FlinkException;
 import org.apache.flink.util.Preconditions;
-import org.apache.flink.util.function.BiConsumerWithException;
-import org.apache.flink.util.function.BiFunctionWithException;
-import org.apache.flink.util.function.CheckedSupplier;
+import org.apache.flink.util.SerializedValue;
 import org.apache.flink.util.function.FunctionUtils;
-import org.apache.flink.util.function.FunctionWithException;
+import org.apache.flink.util.function.ThrowingConsumer;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -82,11 +86,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Base class for the Dispatcher component. The Dispatcher component is responsible
@@ -94,14 +100,13 @@ import java.util.stream.Collectors;
  * the jobs and to recover them in case of a master failure. Furthermore, it knows
  * about the state of the Flink session cluster.
  */
-public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> implements
-	DispatcherGateway, LeaderContender, SubmittedJobGraphStore.SubmittedJobGraphListener {
+public abstract class Dispatcher extends PermanentlyFencedRpcEndpoint<DispatcherId> implements DispatcherGateway {
 
 	public static final String DISPATCHER_NAME = "dispatcher";
 
 	private final Configuration configuration;
 
-	private final SubmittedJobGraphStore submittedJobGraphStore;
+	private final JobGraphWriter jobGraphWriter;
 	private final RunningJobsRegistry runningJobsRegistry;
 
 	private final HighAvailabilityServices highAvailabilityServices;
@@ -112,9 +117,11 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	private final FatalErrorHandler fatalErrorHandler;
 
-	private final Map<JobID, CompletableFuture<JobManagerRunner>> jobManagerRunnerFutures;
+	private final Map<JobID, DispatcherJob> runningJobs;
 
-	private final LeaderElectionService leaderElectionService;
+	private final Collection<JobGraph> recoveredJobs;
+
+	private final DispatcherBootstrapFactory dispatcherBootstrapFactory;
 
 	private final ArchivedExecutionGraphStore archivedExecutionGraphStore;
 
@@ -124,57 +131,74 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	private final HistoryServerArchivist historyServerArchivist;
 
+	private final Executor ioExecutor;
+
 	@Nullable
 	private final String metricServiceQueryAddress;
 
-	private final Map<JobID, CompletableFuture<Void>> jobManagerTerminationFutures;
+	private final Map<JobID, CompletableFuture<Void>> dispatcherJobTerminationFutures;
 
-	private CompletableFuture<Void> recoveryOperation = CompletableFuture.completedFuture(null);
+	protected final CompletableFuture<ApplicationStatus> shutDownFuture;
+
+	private DispatcherBootstrap dispatcherBootstrap;
+
+	/**
+	 * Enum to distinguish between initial job submission and re-submission for recovery.
+	 */
+	protected enum ExecutionType {
+		SUBMISSION, RECOVERY
+	}
 
 	public Dispatcher(
 			RpcService rpcService,
-			String endpointId,
-			Configuration configuration,
-			HighAvailabilityServices highAvailabilityServices,
-			SubmittedJobGraphStore submittedJobGraphStore,
-			GatewayRetriever<ResourceManagerGateway> resourceManagerGatewayRetriever,
-			BlobServer blobServer,
-			HeartbeatServices heartbeatServices,
-			JobManagerMetricGroup jobManagerMetricGroup,
-			@Nullable String metricServiceQueryAddress,
-			ArchivedExecutionGraphStore archivedExecutionGraphStore,
-			JobManagerRunnerFactory jobManagerRunnerFactory,
-			FatalErrorHandler fatalErrorHandler,
-			HistoryServerArchivist historyServerArchivist) throws Exception {
-		super(rpcService, endpointId);
+			DispatcherId fencingToken,
+			Collection<JobGraph> recoveredJobs,
+			DispatcherBootstrapFactory dispatcherBootstrapFactory,
+			DispatcherServices dispatcherServices) throws Exception {
+		super(rpcService, AkkaRpcServiceUtils.createRandomName(DISPATCHER_NAME), fencingToken);
+		checkNotNull(dispatcherServices);
 
-		this.configuration = Preconditions.checkNotNull(configuration);
-		this.highAvailabilityServices = Preconditions.checkNotNull(highAvailabilityServices);
-		this.resourceManagerGatewayRetriever = Preconditions.checkNotNull(resourceManagerGatewayRetriever);
-		this.heartbeatServices = Preconditions.checkNotNull(heartbeatServices);
-		this.blobServer = Preconditions.checkNotNull(blobServer);
-		this.fatalErrorHandler = Preconditions.checkNotNull(fatalErrorHandler);
-		this.submittedJobGraphStore = Preconditions.checkNotNull(submittedJobGraphStore);
-		this.jobManagerMetricGroup = Preconditions.checkNotNull(jobManagerMetricGroup);
-		this.metricServiceQueryAddress = metricServiceQueryAddress;
+		this.configuration = dispatcherServices.getConfiguration();
+		this.highAvailabilityServices = dispatcherServices.getHighAvailabilityServices();
+		this.resourceManagerGatewayRetriever = dispatcherServices.getResourceManagerGatewayRetriever();
+		this.heartbeatServices = dispatcherServices.getHeartbeatServices();
+		this.blobServer = dispatcherServices.getBlobServer();
+		this.fatalErrorHandler = dispatcherServices.getFatalErrorHandler();
+		this.jobGraphWriter = dispatcherServices.getJobGraphWriter();
+		this.jobManagerMetricGroup = dispatcherServices.getJobManagerMetricGroup();
+		this.metricServiceQueryAddress = dispatcherServices.getMetricQueryServiceAddress();
+		this.ioExecutor = dispatcherServices.getIoExecutor();
 
 		this.jobManagerSharedServices = JobManagerSharedServices.fromConfiguration(
 			configuration,
-			this.blobServer);
+			blobServer,
+			fatalErrorHandler);
 
 		this.runningJobsRegistry = highAvailabilityServices.getRunningJobsRegistry();
 
-		jobManagerRunnerFutures = new HashMap<>(16);
+		runningJobs = new HashMap<>(16);
 
-		leaderElectionService = highAvailabilityServices.getDispatcherLeaderElectionService();
+		this.historyServerArchivist = dispatcherServices.getHistoryServerArchivist();
 
-		this.historyServerArchivist = Preconditions.checkNotNull(historyServerArchivist);
+		this.archivedExecutionGraphStore = dispatcherServices.getArchivedExecutionGraphStore();
 
-		this.archivedExecutionGraphStore = Preconditions.checkNotNull(archivedExecutionGraphStore);
+		this.jobManagerRunnerFactory = dispatcherServices.getJobManagerRunnerFactory();
 
-		this.jobManagerRunnerFactory = Preconditions.checkNotNull(jobManagerRunnerFactory);
+		this.dispatcherJobTerminationFutures = new HashMap<>(2);
 
-		this.jobManagerTerminationFutures = new HashMap<>(2);
+		this.shutDownFuture = new CompletableFuture<>();
+
+		this.dispatcherBootstrapFactory = checkNotNull(dispatcherBootstrapFactory);
+
+		this.recoveredJobs = new HashSet<>(recoveredJobs);
+	}
+
+	//------------------------------------------------------
+	// Getters
+	//------------------------------------------------------
+
+	public CompletableFuture<ApplicationStatus> getShutDownFuture() {
+		return shutDownFuture;
 	}
 
 	//------------------------------------------------------
@@ -185,21 +209,40 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	public void onStart() throws Exception {
 		try {
 			startDispatcherServices();
-		} catch (Exception e) {
-			final DispatcherException exception = new DispatcherException(String.format("Could not start the Dispatcher %s", getAddress()), e);
+		} catch (Throwable t) {
+			final DispatcherException exception = new DispatcherException(String.format("Could not start the Dispatcher %s", getAddress()), t);
 			onFatalError(exception);
 			throw exception;
 		}
+
+		startRecoveredJobs();
+		this.dispatcherBootstrap = this.dispatcherBootstrapFactory.create(
+				getSelfGateway(DispatcherGateway.class),
+				this.getRpcService().getScheduledExecutor() ,
+				this::onFatalError);
 	}
 
 	private void startDispatcherServices() throws Exception {
 		try {
-			submittedJobGraphStore.start(this);
-			leaderElectionService.start(this);
-
 			registerDispatcherMetrics(jobManagerMetricGroup);
 		} catch (Exception e) {
 			handleStartDispatcherServicesException(e);
+		}
+	}
+
+	private void startRecoveredJobs() {
+		for (JobGraph recoveredJob : recoveredJobs) {
+			runRecoveredJob(recoveredJob);
+		}
+		recoveredJobs.clear();
+	}
+
+	private void runRecoveredJob(final JobGraph recoveredJob) {
+		checkNotNull(recoveredJob);
+		try {
+			runJob(recoveredJob, ExecutionType.RECOVERY);
+		} catch (Throwable throwable) {
+			onFatalError(new DispatcherException(String.format("Could not start recovered job %s.", recoveredJob.getJobID()), throwable));
 		}
 	}
 
@@ -217,11 +260,13 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	public CompletableFuture<Void> onStop() {
 		log.info("Stopping dispatcher {}.", getAddress());
 
-		final CompletableFuture<Void> allJobManagerRunnersTerminationFuture = terminateJobManagerRunnersAndGetTerminationFuture();
+		final CompletableFuture<Void> allJobsTerminationFuture = terminateRunningJobsAndGetTerminationFuture();
 
 		return FutureUtils.runAfterwards(
-			allJobManagerRunnersTerminationFuture,
+			allJobsTerminationFuture,
 			() -> {
+				dispatcherBootstrap.stop();
+
 				stopDispatcherServices();
 
 				log.info("Stopped dispatcher {}.", getAddress());
@@ -233,19 +278,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		try {
 			jobManagerSharedServices.shutdown();
 		} catch (Exception e) {
-			exception = ExceptionUtils.firstOrSuppressed(e, exception);
-		}
-
-		try {
-			submittedJobGraphStore.stop();
-		} catch (Exception e) {
-			exception = ExceptionUtils.firstOrSuppressed(e, exception);
-		}
-
-		try {
-			leaderElectionService.stop();
-		} catch (Exception e) {
-			exception = ExceptionUtils.firstOrSuppressed(e, exception);
+			exception = e;
 		}
 
 		jobManagerMetricGroup.close();
@@ -264,7 +297,11 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		try {
 			if (isDuplicateJob(jobGraph.getJobID())) {
 				return FutureUtils.completedExceptionally(
-					new JobSubmissionException(jobGraph.getJobID(), "Job has already been submitted."));
+					new DuplicateJobSubmissionException(jobGraph.getJobID()));
+			} else if (isPartialResourceConfigured(jobGraph)) {
+				return FutureUtils.completedExceptionally(
+					new JobSubmissionException(jobGraph.getJobID(), "Currently jobs is not supported if parts of the vertices have " +
+							"resources configured. The limitation will be removed in future versions."));
 			} else {
 				return internalSubmitJob(jobGraph);
 			}
@@ -289,19 +326,40 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			throw new FlinkException(String.format("Failed to retrieve job scheduling status for job %s.", jobId), e);
 		}
 
-		return jobSchedulingStatus == RunningJobsRegistry.JobSchedulingStatus.DONE || jobManagerRunnerFutures.containsKey(jobId);
+		return jobSchedulingStatus == RunningJobsRegistry.JobSchedulingStatus.DONE || runningJobs.containsKey(jobId);
+	}
+
+	private boolean isPartialResourceConfigured(JobGraph jobGraph) {
+		boolean hasVerticesWithUnknownResource = false;
+		boolean hasVerticesWithConfiguredResource = false;
+
+		for (JobVertex jobVertex : jobGraph.getVertices()) {
+			if (jobVertex.getMinResources() == ResourceSpec.UNKNOWN) {
+				hasVerticesWithUnknownResource = true;
+			} else {
+				hasVerticesWithConfiguredResource = true;
+			}
+
+			if (hasVerticesWithUnknownResource && hasVerticesWithConfiguredResource) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	private CompletableFuture<Acknowledge> internalSubmitJob(JobGraph jobGraph) {
 		log.info("Submitting job {} ({}).", jobGraph.getJobID(), jobGraph.getName());
 
-		final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJobManager(jobGraph.getJobID(), jobGraph, this::persistAndRunJob)
+		final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJob(jobGraph.getJobID(), jobGraph,
+			this::persistAndRunJob)
 			.thenApply(ignored -> Acknowledge.get());
 
 		return persistAndRunFuture.handleAsync((acknowledge, throwable) -> {
 			if (throwable != null) {
 				cleanUpJobData(jobGraph.getJobID(), true);
 
+				ClusterEntryPointExceptionUtils.tryEnrichClusterEntryPointError(throwable);
 				final Throwable strippedThrowable = ExceptionUtils.stripCompletionException(throwable);
 				log.error("Failed to submit job {}.", jobGraph.getJobID(), strippedThrowable);
 				throw new CompletionException(
@@ -309,96 +367,109 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			} else {
 				return acknowledge;
 			}
-		}, getRpcService().getExecutor());
+		}, ioExecutor);
 	}
 
-	private CompletableFuture<Void> persistAndRunJob(JobGraph jobGraph) throws Exception {
-		submittedJobGraphStore.putJobGraph(new SubmittedJobGraph(jobGraph));
-
-		final CompletableFuture<Void> runJobFuture = runJob(jobGraph);
-
-		return runJobFuture.whenComplete(BiConsumerWithException.unchecked((Object ignored, Throwable throwable) -> {
-			if (throwable != null) {
-				submittedJobGraphStore.removeJobGraph(jobGraph.getJobID());
-			}
-		}));
+	private void persistAndRunJob(JobGraph jobGraph) throws Exception {
+		jobGraphWriter.putJobGraph(jobGraph);
+		runJob(jobGraph, ExecutionType.SUBMISSION);
 	}
 
-	private CompletableFuture<Void> runJob(JobGraph jobGraph) {
-		Preconditions.checkState(!jobManagerRunnerFutures.containsKey(jobGraph.getJobID()));
+	private void runJob(JobGraph jobGraph, ExecutionType executionType) {
+		Preconditions.checkState(!runningJobs.containsKey(jobGraph.getJobID()));
+		long initializationTimestamp = System.currentTimeMillis();
+		CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = createJobManagerRunner(jobGraph, initializationTimestamp);
 
-		final CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = createJobManagerRunner(jobGraph);
+		DispatcherJob dispatcherJob = DispatcherJob.createFor(
+				jobManagerRunnerFuture,
+				jobGraph.getJobID(),
+				jobGraph.getName(),
+				initializationTimestamp);
+		runningJobs.put(jobGraph.getJobID(), dispatcherJob);
 
-		jobManagerRunnerFutures.put(jobGraph.getJobID(), jobManagerRunnerFuture);
+		final JobID jobId = jobGraph.getJobID();
 
-		return jobManagerRunnerFuture
-			.thenApply(FunctionUtils.nullFn())
-			.whenCompleteAsync(
-				(ignored, throwable) -> {
-					if (throwable != null) {
-						jobManagerRunnerFutures.remove(jobGraph.getJobID());
-					}
-				},
-				getMainThreadExecutor());
+		final CompletableFuture<CleanupJobState> cleanupJobStateFuture = dispatcherJob.getResultFuture().handleAsync(
+			(dispatcherJobResult, throwable) -> {
+				Preconditions.checkState(runningJobs.get(jobId) == dispatcherJob, "The job entry in runningJobs must be bound to the lifetime of the DispatcherJob.");
+
+				if (dispatcherJobResult != null) {
+					return handleDispatcherJobResult(jobId, dispatcherJobResult, executionType);
+				} else {
+					return dispatcherJobFailed(jobId, throwable);
+				}
+			}, getMainThreadExecutor());
+
+		final CompletableFuture<Void> jobTerminationFuture = cleanupJobStateFuture
+			.thenApply(cleanupJobState -> removeJob(jobId, cleanupJobState))
+			.thenCompose(Function.identity());
+
+		FutureUtils.assertNoException(jobTerminationFuture);
+		registerDispatcherJobTerminationFuture(jobId, jobTerminationFuture);
 	}
 
-	private CompletableFuture<JobManagerRunner> createJobManagerRunner(JobGraph jobGraph) {
+	private CleanupJobState handleDispatcherJobResult(
+		JobID jobId,
+		DispatcherJobResult dispatcherJobResult,
+		ExecutionType executionType) {
+		if (dispatcherJobResult.isInitializationFailure() && executionType == ExecutionType.RECOVERY) {
+			return dispatcherJobFailed(
+				jobId,
+				dispatcherJobResult.getInitializationFailure());
+		} else {
+			return jobReachedGloballyTerminalState(dispatcherJobResult.getArchivedExecutionGraph());
+		}
+	}
+
+	enum CleanupJobState {
+		LOCAL(false),
+		GLOBAL(true);
+
+		final boolean cleanupHAData;
+
+		CleanupJobState(boolean cleanupHAData) {
+			this.cleanupHAData = cleanupHAData;
+		}
+	}
+
+	private CleanupJobState dispatcherJobFailed(JobID jobId, Throwable throwable) {
+		if (throwable instanceof JobNotFinishedException) {
+			jobNotFinished(jobId);
+		} else {
+			jobMasterFailed(jobId, throwable);
+		}
+
+		return CleanupJobState.LOCAL;
+	}
+
+	CompletableFuture<JobManagerRunner> createJobManagerRunner(JobGraph jobGraph, long initializationTimestamp) {
 		final RpcService rpcService = getRpcService();
-
-		final CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = CompletableFuture.supplyAsync(
-			CheckedSupplier.unchecked(() ->
-				jobManagerRunnerFactory.createJobManagerRunner(
-					jobGraph,
-					configuration,
-					rpcService,
-					highAvailabilityServices,
-					heartbeatServices,
-					jobManagerSharedServices,
-					new DefaultJobManagerJobMetricGroupFactory(jobManagerMetricGroup),
-					fatalErrorHandler)),
-			rpcService.getExecutor());
-
-		return jobManagerRunnerFuture.thenApply(FunctionUtils.uncheckedFunction(this::startJobManagerRunner));
-	}
-
-	private JobManagerRunner startJobManagerRunner(JobManagerRunner jobManagerRunner) throws Exception {
-		final JobID jobId = jobManagerRunner.getJobGraph().getJobID();
-
-		FutureUtils.assertNoException(
-			jobManagerRunner.getResultFuture().handleAsync(
-				(ArchivedExecutionGraph archivedExecutionGraph, Throwable throwable) -> {
-					// check if we are still the active JobManagerRunner by checking the identity
-					final CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = jobManagerRunnerFutures.get(jobId);
-					final JobManagerRunner currentJobManagerRunner = jobManagerRunnerFuture != null ? jobManagerRunnerFuture.getNow(null) : null;
-					//noinspection ObjectEquality
-					if (jobManagerRunner == currentJobManagerRunner) {
-						if (archivedExecutionGraph != null) {
-							jobReachedGloballyTerminalState(archivedExecutionGraph);
-						} else {
-							final Throwable strippedThrowable = ExceptionUtils.stripCompletionException(throwable);
-
-							if (strippedThrowable instanceof JobNotFinishedException) {
-								jobNotFinished(jobId);
-							} else {
-								jobMasterFailed(jobId, strippedThrowable);
-							}
-						}
-					} else {
-						log.debug("There is a newer JobManagerRunner for the job {}.", jobId);
-					}
-
-					return null;
-				}, getMainThreadExecutor()));
-
-		jobManagerRunner.start();
-
-		return jobManagerRunner;
+		return CompletableFuture.supplyAsync(
+			() -> {
+				try {
+					JobManagerRunner runner = jobManagerRunnerFactory.createJobManagerRunner(
+						jobGraph,
+						configuration,
+						rpcService,
+						highAvailabilityServices,
+						heartbeatServices,
+						jobManagerSharedServices,
+						new DefaultJobManagerJobMetricGroupFactory(jobManagerMetricGroup),
+						fatalErrorHandler,
+						initializationTimestamp);
+					runner.start();
+					return runner;
+				} catch (Exception e) {
+					throw new CompletionException(new JobInitializationException(jobGraph.getJobID(), "Could not instantiate JobManager.", e));
+				}
+			},
+			ioExecutor); // do not use main thread executor. Otherwise, Dispatcher is blocked on JobManager creation
 	}
 
 	@Override
 	public CompletableFuture<Collection<JobID>> listJobs(Time timeout) {
 		return CompletableFuture.completedFuture(
-			Collections.unmodifiableSet(new HashSet<>(jobManagerRunnerFutures.keySet())));
+			Collections.unmodifiableSet(new HashSet<>(runningJobs.keySet())));
 	}
 
 	@Override
@@ -422,17 +493,18 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	@Override
 	public CompletableFuture<Acknowledge> cancelJob(JobID jobId, Time timeout) {
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-		return jobMasterGatewayFuture.thenCompose((JobMasterGateway jobMasterGateway) -> jobMasterGateway.cancel(timeout));
+		Optional<DispatcherJob> maybeJob = getDispatcherJob(jobId);
+		return maybeJob.map(job -> job.cancel(timeout)).orElseGet(() -> {
+			log.debug("Dispatcher is unable to cancel job {}: not found", jobId);
+			return FutureUtils.completedExceptionally(new FlinkJobNotFoundException(jobId));
+		});
 	}
 
 	@Override
 	public CompletableFuture<ClusterOverview> requestClusterOverview(Time timeout) {
 		CompletableFuture<ResourceOverview> taskManagerOverviewFuture = runResourceManagerCommand(resourceManagerGateway -> resourceManagerGateway.requestResourceOverview(timeout));
 
-		final List<CompletableFuture<Optional<JobStatus>>> optionalJobInformation = queryJobMastersForInformation(
-			(JobMasterGateway jobMasterGateway) -> jobMasterGateway.requestJobStatus(timeout));
+		final List<CompletableFuture<Optional<JobStatus>>> optionalJobInformation = queryJobMastersForInformation(dispatcherJob -> dispatcherJob.requestJobStatus(timeout));
 
 		CompletableFuture<Collection<Optional<JobStatus>>> allOptionalJobsFuture = FutureUtils.combineAll(optionalJobInformation);
 
@@ -450,8 +522,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	@Override
 	public CompletableFuture<MultipleJobsDetails> requestMultipleJobDetails(Time timeout) {
-		List<CompletableFuture<Optional<JobDetails>>> individualOptionalJobDetails = queryJobMastersForInformation(
-			(JobMasterGateway jobMasterGateway) -> jobMasterGateway.requestJobDetails(timeout));
+		List<CompletableFuture<Optional<JobDetails>>> individualOptionalJobDetails = queryJobMastersForInformation(dj -> dj.requestJobDetails(timeout));
 
 		CompletableFuture<Collection<Optional<JobDetails>>> optionalCombinedJobDetails = FutureUtils.combineAll(
 			individualOptionalJobDetails);
@@ -473,59 +544,47 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	@Override
 	public CompletableFuture<JobStatus> requestJobStatus(JobID jobId, Time timeout) {
-
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-		final CompletableFuture<JobStatus> jobStatusFuture = jobMasterGatewayFuture.thenCompose(
-			(JobMasterGateway jobMasterGateway) -> jobMasterGateway.requestJobStatus(timeout));
-
-		return jobStatusFuture.exceptionally(
-			(Throwable throwable) -> {
-				final JobDetails jobDetails = archivedExecutionGraphStore.getAvailableJobDetails(jobId);
-
-				// check whether it is a completed job
-				if (jobDetails == null) {
-					throw new CompletionException(ExceptionUtils.stripCompletionException(throwable));
-				} else {
-					return jobDetails.getStatus();
-				}
-			});
+		Optional<DispatcherJob> maybeJob = getDispatcherJob(jobId);
+		return maybeJob.map(job -> job.requestJobStatus(timeout)).orElseGet(() -> {
+			// is it a completed job?
+			final JobDetails jobDetails = archivedExecutionGraphStore.getAvailableJobDetails(jobId);
+			if (jobDetails == null) {
+				return FutureUtils.completedExceptionally(new FlinkJobNotFoundException(jobId));
+			} else {
+				return CompletableFuture.completedFuture(jobDetails.getStatus());
+			}
+		});
 	}
 
 	@Override
 	public CompletableFuture<OperatorBackPressureStatsResponse> requestOperatorBackPressureStats(
 			final JobID jobId,
 			final JobVertexID jobVertexId) {
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-		return jobMasterGatewayFuture.thenCompose((JobMasterGateway jobMasterGateway) -> jobMasterGateway.requestOperatorBackPressureStats(jobVertexId));
+		return performOperationOnJobMasterGateway(jobId, gateway -> gateway.requestOperatorBackPressureStats(jobVertexId));
 	}
 
 	@Override
 	public CompletableFuture<ArchivedExecutionGraph> requestJob(JobID jobId, Time timeout) {
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-		final CompletableFuture<ArchivedExecutionGraph> archivedExecutionGraphFuture = jobMasterGatewayFuture.thenCompose(
-			(JobMasterGateway jobMasterGateway) -> jobMasterGateway.requestJob(timeout));
-
-		return archivedExecutionGraphFuture.exceptionally(
-			(Throwable throwable) -> {
-				final ArchivedExecutionGraph serializableExecutionGraph = archivedExecutionGraphStore.get(jobId);
-
-				// check whether it is a completed job
-				if (serializableExecutionGraph == null) {
-					throw new CompletionException(ExceptionUtils.stripCompletionException(throwable));
-				} else {
-					return serializableExecutionGraph;
-				}
-			});
+		Function<Throwable, ArchivedExecutionGraph> checkExecutionGraphStoreOnException = throwable ->  {
+			// check whether it is a completed job
+			final ArchivedExecutionGraph archivedExecutionGraph = archivedExecutionGraphStore.get(jobId);
+			if (archivedExecutionGraph == null) {
+				throw new CompletionException(ExceptionUtils.stripCompletionException(throwable));
+			} else {
+				return archivedExecutionGraph;
+			}
+		};
+		Optional<DispatcherJob> maybeJob = getDispatcherJob(jobId);
+		return maybeJob.map(job -> job.requestJob(timeout))
+			.orElse(FutureUtils.completedExceptionally(new FlinkJobNotFoundException(jobId)))
+			.exceptionally(checkExecutionGraphStoreOnException);
 	}
 
 	@Override
 	public CompletableFuture<JobResult> requestJobResult(JobID jobId, Time timeout) {
-		final CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = jobManagerRunnerFutures.get(jobId);
+		DispatcherJob job = runningJobs.get(jobId);
 
-		if (jobManagerRunnerFuture == null) {
+		if (job == null) {
 			final ArchivedExecutionGraph archivedExecutionGraph = archivedExecutionGraphStore.get(jobId);
 
 			if (archivedExecutionGraph == null) {
@@ -534,7 +593,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 				return CompletableFuture.completedFuture(JobResult.createFrom(archivedExecutionGraph));
 			}
 		} else {
-			return jobManagerRunnerFuture.thenCompose(JobManagerRunner::getResultFuture).thenApply(JobResult::createFrom);
+			return job.getResultFuture().thenApply(dispatcherJobResult -> JobResult.createFrom(dispatcherJobResult.getArchivedExecutionGraph()));
 		}
 	}
 
@@ -563,11 +622,8 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			final String targetDirectory,
 			final boolean cancelJob,
 			final Time timeout) {
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
 
-		return jobMasterGatewayFuture.thenCompose(
-			(JobMasterGateway jobMasterGateway) ->
-				jobMasterGateway.triggerSavepoint(targetDirectory, cancelJob, timeout));
+		return performOperationOnJobMasterGateway(jobId, gateway -> gateway.triggerSavepoint(targetDirectory, cancelJob, timeout));
 	}
 
 	@Override
@@ -576,63 +632,52 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			final String targetDirectory,
 			final boolean advanceToEndOfEventTime,
 			final Time timeout) {
-		final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-		return jobMasterGatewayFuture.thenCompose(
-				(JobMasterGateway jobMasterGateway) ->
-						jobMasterGateway.stopWithSavepoint(targetDirectory, advanceToEndOfEventTime, timeout));
+		return performOperationOnJobMasterGateway(jobId, gateway -> gateway.stopWithSavepoint(targetDirectory, advanceToEndOfEventTime, timeout));
 	}
 
 	@Override
 	public CompletableFuture<Acknowledge> shutDownCluster() {
-		closeAsync();
+		return shutDownCluster(ApplicationStatus.SUCCEEDED);
+	}
+
+	@Override
+	public CompletableFuture<Acknowledge> shutDownCluster(final ApplicationStatus applicationStatus) {
+		shutDownFuture.complete(applicationStatus);
 		return CompletableFuture.completedFuture(Acknowledge.get());
 	}
 
-	/**
-	 * Cleans up the job related data from the dispatcher. If cleanupHA is true, then
-	 * the data will also be removed from HA.
-	 *
-	 * @param jobId JobID identifying the job to clean up
-	 * @param cleanupHA True iff HA data shall also be cleaned up
-	 */
-	private void removeJobAndRegisterTerminationFuture(JobID jobId, boolean cleanupHA) {
-		final CompletableFuture<Void> cleanupFuture = removeJob(jobId, cleanupHA);
-
-		registerJobManagerRunnerTerminationFuture(jobId, cleanupFuture);
+	@Override
+	public CompletableFuture<CoordinationResponse> deliverCoordinationRequestToCoordinator(
+			JobID jobId,
+			OperatorID operatorId,
+			SerializedValue<CoordinationRequest> serializedRequest,
+			Time timeout) {
+		return performOperationOnJobMasterGateway(jobId, gateway -> gateway.deliverCoordinationRequestToCoordinator(operatorId, serializedRequest, timeout));
 	}
 
-	private void registerJobManagerRunnerTerminationFuture(JobID jobId, CompletableFuture<Void> jobManagerRunnerTerminationFuture) {
-		Preconditions.checkState(!jobManagerTerminationFutures.containsKey(jobId));
-
-		jobManagerTerminationFutures.put(jobId, jobManagerRunnerTerminationFuture);
+	private void registerDispatcherJobTerminationFuture(JobID jobId, CompletableFuture<Void> dispatcherJobTerminationFuture) {
+		Preconditions.checkState(!dispatcherJobTerminationFutures.containsKey(jobId));
+		dispatcherJobTerminationFutures.put(jobId, dispatcherJobTerminationFuture);
 
 		// clean up the pending termination future
-		jobManagerRunnerTerminationFuture.thenRunAsync(
+		dispatcherJobTerminationFuture.thenRunAsync(
 			() -> {
-				final CompletableFuture<Void> terminationFuture = jobManagerTerminationFutures.remove(jobId);
+				final CompletableFuture<Void> terminationFuture = dispatcherJobTerminationFutures.remove(jobId);
 
 				//noinspection ObjectEquality
-				if (terminationFuture != null && terminationFuture != jobManagerRunnerTerminationFuture) {
-					jobManagerTerminationFutures.put(jobId, terminationFuture);
+				if (terminationFuture != null && terminationFuture != dispatcherJobTerminationFuture) {
+					dispatcherJobTerminationFutures.put(jobId, terminationFuture);
 				}
 			},
-			getUnfencedMainThreadExecutor());
+			getMainThreadExecutor());
 	}
 
-	private CompletableFuture<Void> removeJob(JobID jobId, boolean cleanupHA) {
-		CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = jobManagerRunnerFutures.remove(jobId);
+	private CompletableFuture<Void> removeJob(JobID jobId, CleanupJobState cleanupJobState) {
+		final DispatcherJob job = checkNotNull(runningJobs.remove(jobId));
 
-		final CompletableFuture<Void> jobManagerRunnerTerminationFuture;
-		if (jobManagerRunnerFuture != null) {
-			jobManagerRunnerTerminationFuture = jobManagerRunnerFuture.thenCompose(JobManagerRunner::closeAsync);
-		} else {
-			jobManagerRunnerTerminationFuture = CompletableFuture.completedFuture(null);
-		}
+		final CompletableFuture<Void> jobTerminationFuture = job.closeAsync();
 
-		return jobManagerRunnerTerminationFuture.thenRunAsync(
-			() -> cleanUpJobData(jobId, cleanupHA),
-			getRpcService().getExecutor());
+		return jobTerminationFuture.thenRunAsync(() -> cleanUpJobData(jobId, cleanupJobState.cleanupHAData), ioExecutor);
 	}
 
 	private void cleanUpJobData(JobID jobId, boolean cleanupHA) {
@@ -641,7 +686,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		boolean cleanupHABlobs = false;
 		if (cleanupHA) {
 			try {
-				submittedJobGraphStore.removeJobGraph(jobId);
+				jobGraphWriter.removeJobGraph(jobId);
 
 				// only clean up the HA blobs if we could remove the job from HA storage
 				cleanupHABlobs = true;
@@ -656,7 +701,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			}
 		} else {
 			try {
-				submittedJobGraphStore.releaseJobGraph(jobId);
+				jobGraphWriter.releaseJobGraph(jobId);
 			} catch (Exception e) {
 				log.warn("Could not properly release job {} from submitted job graph store.", jobId, e);
 			}
@@ -666,81 +711,37 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	}
 
 	/**
-	 * Terminate all currently running {@link JobManagerRunner}.
+	 * Terminate all currently running {@link DispatcherJob}s.
 	 */
-	private void terminateJobManagerRunners() {
+	private void terminateRunningJobs() {
 		log.info("Stopping all currently running jobs of dispatcher {}.", getAddress());
 
-		final HashSet<JobID> jobsToRemove = new HashSet<>(jobManagerRunnerFutures.keySet());
+		final HashSet<JobID> jobsToRemove = new HashSet<>(runningJobs.keySet());
 
 		for (JobID jobId : jobsToRemove) {
-			removeJobAndRegisterTerminationFuture(jobId, false);
+			terminateJob(jobId);
 		}
 	}
 
-	private CompletableFuture<Void> terminateJobManagerRunnersAndGetTerminationFuture() {
-		terminateJobManagerRunners();
-		final Collection<CompletableFuture<Void>> values = jobManagerTerminationFutures.values();
+	private void terminateJob(JobID jobId) {
+		final DispatcherJob dispatcherJob = runningJobs.get(jobId);
+
+		if (dispatcherJob != null) {
+			dispatcherJob.closeAsync();
+		}
+	}
+
+	private CompletableFuture<Void> terminateRunningJobsAndGetTerminationFuture() {
+		terminateRunningJobs();
+		final Collection<CompletableFuture<Void>> values = dispatcherJobTerminationFutures.values();
 		return FutureUtils.completeAll(values);
-	}
-
-	/**
-	 * Recovers all jobs persisted via the submitted job graph store.
-	 */
-	@VisibleForTesting
-	Collection<JobGraph> recoverJobs() throws Exception {
-		log.info("Recovering all persisted jobs.");
-		final Collection<JobID> jobIds = submittedJobGraphStore.getJobIds();
-
-		try {
-			return recoverJobGraphs(jobIds);
-		} catch (Exception e) {
-			// release all recovered job graphs
-			for (JobID jobId : jobIds) {
-				try {
-					submittedJobGraphStore.releaseJobGraph(jobId);
-				} catch (Exception ie) {
-					e.addSuppressed(ie);
-				}
-			}
-			throw e;
-		}
-	}
-
-	@Nonnull
-	private Collection<JobGraph> recoverJobGraphs(Collection<JobID> jobIds) throws Exception {
-		final List<JobGraph> jobGraphs = new ArrayList<>(jobIds.size());
-
-		for (JobID jobId : jobIds) {
-			final JobGraph jobGraph = recoverJob(jobId);
-
-			if (jobGraph == null) {
-				throw new FlinkJobNotFoundException(jobId);
-			}
-
-			jobGraphs.add(jobGraph);
-		}
-
-		return jobGraphs;
-	}
-
-	@Nullable
-	private JobGraph recoverJob(JobID jobId) throws Exception {
-		log.debug("Recover job {}.", jobId);
-		final SubmittedJobGraph submittedJobGraph = submittedJobGraphStore.recoverJobGraph(jobId);
-
-		if (submittedJobGraph != null) {
-			return submittedJobGraph.getJobGraph();
-		} else {
-			return null;
-		}
 	}
 
 	protected void onFatalError(Throwable throwable) {
 		fatalErrorHandler.onFatalError(throwable);
 	}
 
-	protected void jobReachedGloballyTerminalState(ArchivedExecutionGraph archivedExecutionGraph) {
+	protected CleanupJobState jobReachedGloballyTerminalState(ArchivedExecutionGraph archivedExecutionGraph) {
 		Preconditions.checkArgument(
 			archivedExecutionGraph.getState().isGloballyTerminalState(),
 			"Job %s is in state %s which is not globally terminal.",
@@ -751,9 +752,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 		archiveExecutionGraph(archivedExecutionGraph);
 
-		final JobID jobId = archivedExecutionGraph.getJobID();
-
-		removeJobAndRegisterTerminationFuture(jobId, true);
+		return CleanupJobState.GLOBAL;
 	}
 
 	private void archiveExecutionGraph(ArchivedExecutionGraph archivedExecutionGraph) {
@@ -783,8 +782,6 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 
 	protected void jobNotFinished(JobID jobId) {
 		log.info("Job {} was not finished by JobManager.", jobId);
-
-		removeJobAndRegisterTerminationFuture(jobId, false);
 	}
 
 	private void jobMasterFailed(JobID jobId, Throwable cause) {
@@ -793,28 +790,31 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		onFatalError(new FlinkException(String.format("JobMaster for job %s failed.", jobId), cause));
 	}
 
-	private CompletableFuture<JobMasterGateway> getJobMasterGatewayFuture(JobID jobId) {
-		final CompletableFuture<JobManagerRunner> jobManagerRunnerFuture = jobManagerRunnerFutures.get(jobId);
-
-		if (jobManagerRunnerFuture == null) {
+	/**
+	 * Ensures that the JobMasterGateway is available.
+	 */
+	private CompletableFuture<JobMasterGateway> getJobMasterGateway(JobID jobId) {
+		DispatcherJob job = runningJobs.get(jobId);
+		if (job == null) {
 			return FutureUtils.completedExceptionally(new FlinkJobNotFoundException(jobId));
-		} else {
-			final CompletableFuture<JobMasterGateway> leaderGatewayFuture = jobManagerRunnerFuture.thenCompose(JobManagerRunner::getLeaderGatewayFuture);
-			return leaderGatewayFuture.thenApplyAsync(
-				(JobMasterGateway jobMasterGateway) -> {
-					// check whether the retrieved JobMasterGateway belongs still to a running JobMaster
-					if (jobManagerRunnerFutures.containsKey(jobId)) {
-						return jobMasterGateway;
-					} else {
-						throw new CompletionException(new FlinkJobNotFoundException(jobId));
-					}
-				},
-				getMainThreadExecutor());
 		}
+		if (!job.isInitialized()) {
+			return FutureUtils.completedExceptionally(new UnavailableDispatcherOperationException("Unable to get JobMasterGateway for initializing job. "
+				+ "The requested operation is not available while the JobManager is initializing."));
+		}
+		return job.getJobMasterGateway();
+	}
+
+	private <T> CompletableFuture<T> performOperationOnJobMasterGateway(JobID jobId, Function<JobMasterGateway, CompletableFuture<T>> operation) {
+		return getJobMasterGateway(jobId).thenCompose(operation);
 	}
 
 	private CompletableFuture<ResourceManagerGateway> getResourceManagerGateway() {
 		return resourceManagerGatewayRetriever.getFuture();
+	}
+
+	private Optional<DispatcherJob> getDispatcherJob(JobID jobId) {
+		return Optional.ofNullable(runningJobs.get(jobId));
 	}
 
 	private <T> CompletableFuture<T> runResourceManagerCommand(Function<ResourceManagerGateway, CompletableFuture<T>> resourceManagerCommand) {
@@ -826,237 +826,52 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	}
 
 	@Nonnull
-	private <T> List<CompletableFuture<Optional<T>>> queryJobMastersForInformation(Function<JobMasterGateway, CompletableFuture<T>> queryFunction) {
-		final int numberJobsRunning = jobManagerRunnerFutures.size();
+	private <T> List<CompletableFuture<Optional<T>>> queryJobMastersForInformation(Function<DispatcherJob, CompletableFuture<T>> queryFunction) {
 
-		ArrayList<CompletableFuture<Optional<T>>> optionalJobInformation = new ArrayList<>(
-			numberJobsRunning);
+		List<CompletableFuture<Optional<T>>> optionalJobInformation = new ArrayList<>(
+			runningJobs.size());
 
-		for (JobID jobId : jobManagerRunnerFutures.keySet()) {
-			final CompletableFuture<JobMasterGateway> jobMasterGatewayFuture = getJobMasterGatewayFuture(jobId);
-
-			final CompletableFuture<Optional<T>> optionalRequest = jobMasterGatewayFuture
-				.thenCompose(queryFunction::apply)
-				.handle((T value, Throwable throwable) -> Optional.ofNullable(value));
-
-			optionalJobInformation.add(optionalRequest);
+		for (DispatcherJob job : runningJobs.values()) {
+			final CompletableFuture<Optional<T>> queryResult = queryFunction.apply(job)
+					.handle((T value, Throwable t) -> Optional.ofNullable(value));
+			optionalJobInformation.add(queryResult);
 		}
 		return optionalJobInformation;
 	}
 
-	//------------------------------------------------------
-	// Leader contender
-	//------------------------------------------------------
-
-	/**
-	 * Callback method when current resourceManager is granted leadership.
-	 *
-	 * @param newLeaderSessionID unique leadershipID
-	 */
-	@Override
-	public void grantLeadership(final UUID newLeaderSessionID) {
-		runAsyncWithoutFencing(
-			() -> {
-				log.info("Dispatcher {} was granted leadership with fencing token {}", getAddress(), newLeaderSessionID);
-
-				final CompletableFuture<Collection<JobGraph>> recoveredJobsFuture = recoveryOperation.thenApplyAsync(
-					FunctionUtils.uncheckedFunction(ignored -> recoverJobs()),
-					getRpcService().getExecutor());
-
-				final CompletableFuture<Boolean> fencingTokenFuture = recoveredJobsFuture.thenComposeAsync(
-					(Collection<JobGraph> recoveredJobs) -> tryAcceptLeadershipAndRunJobs(newLeaderSessionID, recoveredJobs),
-					getUnfencedMainThreadExecutor());
-
-				final CompletableFuture<Void> confirmationFuture = fencingTokenFuture.thenCombineAsync(
-					recoveredJobsFuture,
-					BiFunctionWithException.unchecked((Boolean confirmLeadership, Collection<JobGraph> recoveredJobs) -> {
-						if (confirmLeadership) {
-							leaderElectionService.confirmLeaderSessionID(newLeaderSessionID);
-						} else {
-							for (JobGraph recoveredJob : recoveredJobs) {
-								submittedJobGraphStore.releaseJobGraph(recoveredJob.getJobID());
-							}
-						}
-						return null;
-					}),
-					getRpcService().getExecutor());
-
-				confirmationFuture.whenComplete(
-					(Void ignored, Throwable throwable) -> {
-						if (throwable != null) {
-							onFatalError(
-								new DispatcherException(
-									String.format("Failed to take leadership with session id %s.", newLeaderSessionID),
-									(ExceptionUtils.stripCompletionException(throwable))));
-						}
-					});
-
-				recoveryOperation = confirmationFuture;
-			});
-	}
-
-	private CompletableFuture<Boolean> tryAcceptLeadershipAndRunJobs(UUID newLeaderSessionID, Collection<JobGraph> recoveredJobs) {
-		final DispatcherId dispatcherId = DispatcherId.fromUuid(newLeaderSessionID);
-
-		if (leaderElectionService.hasLeadership(newLeaderSessionID)) {
-			log.debug("Dispatcher {} accepted leadership with fencing token {}. Start recovered jobs.", getAddress(), dispatcherId);
-			setNewFencingToken(dispatcherId);
-
-			Collection<CompletableFuture<?>> runFutures = new ArrayList<>(recoveredJobs.size());
-
-			for (JobGraph recoveredJob : recoveredJobs) {
-				final CompletableFuture<?> runFuture = waitForTerminatingJobManager(recoveredJob.getJobID(), recoveredJob, this::runJob);
-				runFutures.add(runFuture);
-			}
-
-			return FutureUtils.waitForAll(runFutures).thenApply(ignored -> true);
-		} else {
-			log.debug("Dispatcher {} lost leadership before accepting it. Stop recovering jobs for fencing token {}.", getAddress(), dispatcherId);
-			return CompletableFuture.completedFuture(false);
-		}
-	}
-
-	private CompletableFuture<Void> waitForTerminatingJobManager(JobID jobId, JobGraph jobGraph, FunctionWithException<JobGraph, CompletableFuture<Void>, ?> action) {
+	private CompletableFuture<Void> waitForTerminatingJob(JobID jobId, JobGraph jobGraph, ThrowingConsumer<JobGraph, ?> action) {
 		final CompletableFuture<Void> jobManagerTerminationFuture = getJobTerminationFuture(jobId)
 			.exceptionally((Throwable throwable) -> {
 				throw new CompletionException(
 					new DispatcherException(
 						String.format("Termination of previous JobManager for job %s failed. Cannot submit job under the same job id.", jobId),
-						throwable)); });
+						throwable));
+			});
 
-		return jobManagerTerminationFuture.thenComposeAsync(
-			FunctionUtils.uncheckedFunction((ignored) -> {
-				jobManagerTerminationFutures.remove(jobId);
-				return action.apply(jobGraph);
+		return jobManagerTerminationFuture.thenAcceptAsync(
+			FunctionUtils.uncheckedConsumer((ignored) -> {
+				dispatcherJobTerminationFutures.remove(jobId);
+				action.accept(jobGraph);
 			}),
 			getMainThreadExecutor());
 	}
 
 	CompletableFuture<Void> getJobTerminationFuture(JobID jobId) {
-		if (jobManagerRunnerFutures.containsKey(jobId)) {
+		if (runningJobs.containsKey(jobId)) {
 			return FutureUtils.completedExceptionally(new DispatcherException(String.format("Job with job id %s is still running.", jobId)));
 		} else {
-			return jobManagerTerminationFutures.getOrDefault(jobId, CompletableFuture.completedFuture(null));
+			return dispatcherJobTerminationFutures.getOrDefault(jobId, CompletableFuture.completedFuture(null));
 		}
-	}
-
-	@VisibleForTesting
-	CompletableFuture<Void> getRecoveryOperation() {
-		return recoveryOperation;
-	}
-
-	private void setNewFencingToken(@Nullable DispatcherId dispatcherId) {
-		// clear the state if we've been the leader before
-		if (getFencingToken() != null) {
-			clearDispatcherState();
-		}
-
-		setFencingToken(dispatcherId);
-	}
-
-	private void clearDispatcherState() {
-		terminateJobManagerRunners();
 	}
 
 	private void registerDispatcherMetrics(MetricGroup jobManagerMetricGroup) {
 		jobManagerMetricGroup.gauge(MetricNames.NUM_RUNNING_JOBS,
-			() -> (long) jobManagerRunnerFutures.size());
+			() -> (long) runningJobs.size());
 	}
 
-	/**
-	 * Callback method when current resourceManager loses leadership.
-	 */
-	@Override
-	public void revokeLeadership() {
-		runAsyncWithoutFencing(
-			() -> {
-				log.info("Dispatcher {} was revoked leadership.", getAddress());
-
-				setNewFencingToken(null);
-			});
-	}
-
-	/**
-	 * Handles error occurring in the leader election service.
-	 *
-	 * @param exception Exception being thrown in the leader election service
-	 */
-	@Override
-	public void handleError(final Exception exception) {
-		onFatalError(new DispatcherException("Received an error from the LeaderElectionService.", exception));
-	}
-
-	//------------------------------------------------------
-	// SubmittedJobGraphListener
-	//------------------------------------------------------
-
-	@Override
-	public void onAddedJobGraph(final JobID jobId) {
-		runAsync(
-			() -> {
-				if (!jobManagerRunnerFutures.containsKey(jobId)) {
-					// IMPORTANT: onAddedJobGraph can generate false positives and, thus, we must expect that
-					// the specified job is already removed from the SubmittedJobGraphStore. In this case,
-					// SubmittedJobGraphStore.recoverJob returns null.
-					final CompletableFuture<Optional<JobGraph>> recoveredJob = recoveryOperation.thenApplyAsync(
-						FunctionUtils.uncheckedFunction(ignored -> Optional.ofNullable(recoverJob(jobId))),
-						getRpcService().getExecutor());
-
-					final DispatcherId dispatcherId = getFencingToken();
-					final CompletableFuture<Void> submissionFuture = recoveredJob.thenComposeAsync(
-						(Optional<JobGraph> jobGraphOptional) -> jobGraphOptional.map(
-							FunctionUtils.uncheckedFunction(jobGraph -> tryRunRecoveredJobGraph(jobGraph, dispatcherId).thenAcceptAsync(
-								FunctionUtils.uncheckedConsumer((Boolean isRecoveredJobRunning) -> {
-										if (!isRecoveredJobRunning) {
-											submittedJobGraphStore.releaseJobGraph(jobId);
-										}
-									}),
-									getRpcService().getExecutor())))
-							.orElse(CompletableFuture.completedFuture(null)),
-						getUnfencedMainThreadExecutor());
-
-					submissionFuture.whenComplete(
-						(Void ignored, Throwable throwable) -> {
-							if (throwable != null) {
-								onFatalError(
-									new DispatcherException(
-										String.format("Could not start the added job %s", jobId),
-										ExceptionUtils.stripCompletionException(throwable)));
-							}
-						});
-
-					recoveryOperation = submissionFuture;
-				}
-			});
-	}
-
-	private CompletableFuture<Boolean> tryRunRecoveredJobGraph(JobGraph jobGraph, DispatcherId dispatcherId) throws Exception {
-		if (leaderElectionService.hasLeadership(dispatcherId.toUUID())) {
-			final JobID jobId = jobGraph.getJobID();
-			if (jobManagerRunnerFutures.containsKey(jobId)) {
-				// we must not release the job graph lock since it can only be locked once and
-				// is currently being executed. Once we support multiple locks, we must release
-				// the JobGraph here
-				log.debug("Ignore added JobGraph because the job {} is already running.", jobId);
-				return CompletableFuture.completedFuture(true);
-			} else if (runningJobsRegistry.getJobSchedulingStatus(jobId) != RunningJobsRegistry.JobSchedulingStatus.DONE) {
-				return waitForTerminatingJobManager(jobId, jobGraph, this::runJob).thenApply(ignored -> true);
-			} else {
-				log.debug("Ignore added JobGraph because the job {} has already been completed.", jobId);
-			}
-		}
-
-		return CompletableFuture.completedFuture(false);
-	}
-
-	@Override
-	public void onRemovedJobGraph(final JobID jobId) {
-		runAsync(() -> {
-			try {
-				removeJobAndRegisterTerminationFuture(jobId, false);
-			} catch (final Exception e) {
-				onFatalError(new DispatcherException(String.format("Could not remove job %s.", jobId), e));
-			}
-		});
+	public CompletableFuture<Void> onRemovedJobGraph(JobID jobId) {
+		return CompletableFuture.runAsync(
+			() -> terminateJob(jobId),
+			getMainThreadExecutor());
 	}
 }

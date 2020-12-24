@@ -1,5 +1,5 @@
 ---
-title: "Process Function (Low-level Operations)"
+title: "Process Function"
 nav-title: "Process Function"
 nav-parent_id: streaming_operators
 nav-pos: 35
@@ -38,14 +38,13 @@ all (acyclic) streaming applications:
 The `ProcessFunction` can be thought of as a `FlatMapFunction` with access to keyed state and timers. It handles events
 by being invoked for each event received in the input stream(s).
 
-For fault-tolerant state, the `ProcessFunction` gives access to Flink's [keyed state]({{ site.baseurl }}/dev/stream/state/state.html), accessible via the
+For fault-tolerant state, the `ProcessFunction` gives access to Flink's [keyed state]({% link dev/stream/state/state.md %}), accessible via the
 `RuntimeContext`, similar to the way other stateful functions can access keyed state.
 
-The timers allow applications to react to changes in processing time and in [event time]({{ site.baseurl }}/dev/event_time.html).
+The timers allow applications to react to changes in processing time and in [event time]({% link dev/event_time.md %}).
 Every call to the function `processElement(...)` gets a `Context` object which gives access to the element's
 event time timestamp, and to the *TimerService*. The `TimerService` can be used to register callbacks for future
-event-/processing-time instants. When a timer's particular time is reached, the `onTimer(...)` method is
-called. During that call, all states are again scoped to the key with which the timer was created, allowing
+event-/processing-time instants. With event-time timers, the `onTimer(...)` method is called when the current watermark is advanced up to or beyond the timestamp of the timer, while with processing-time timers, `onTimer(...)` is called when wall clock time reaches the specified time. During that call, all states are again scoped to the key with which the timer was created, allowing
 timers to manipulate keyed state.
 
 <span class="label label-info">Note</span> If you want to access keyed state and timers you have
@@ -58,7 +57,7 @@ stream.keyBy(...).process(new MyProcessFunction())
 
 ## Low-level Joins
 
-To realize low-level operations on two inputs, applications can use `CoProcessFunction`. This
+To realize low-level operations on two inputs, applications can use `CoProcessFunction` or `KeyedCoProcessFunction`. This
 function is bound to two different inputs and gets individual calls to `processElement1(...)` and
 `processElement2(...)` for records from the two different inputs.
 
@@ -97,9 +96,9 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.functions.ProcessFunction;
-import org.apache.flink.streaming.api.functions.ProcessFunction.Context;
-import org.apache.flink.streaming.api.functions.ProcessFunction.OnTimerContext;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction.Context;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction.OnTimerContext;
 import org.apache.flink.util.Collector;
 
 
@@ -108,7 +107,7 @@ DataStream<Tuple2<String, String>> stream = ...;
 
 // apply the process function onto a keyed stream
 DataStream<Tuple2<String, Long>> result = stream
-    .keyBy(0)
+    .keyBy(value -> value.f0)
     .process(new CountWithTimeoutFunction());
 
 /**
@@ -184,10 +183,8 @@ public class CountWithTimeoutFunction
 {% highlight scala %}
 import org.apache.flink.api.common.state.ValueState
 import org.apache.flink.api.common.state.ValueStateDescriptor
-import org.apache.flink.api.java.tuple.Tuple;
-import org.apache.flink.streaming.api.functions.ProcessFunction
-import org.apache.flink.streaming.api.functions.ProcessFunction.Context
-import org.apache.flink.streaming.api.functions.ProcessFunction.OnTimerContext
+import org.apache.flink.api.java.tuple.Tuple
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.util.Collector
 
 // the source data stream
@@ -195,7 +192,7 @@ val stream: DataStream[Tuple2[String, String]] = ...
 
 // apply the process function onto a keyed stream
 val result: DataStream[Tuple2[String, Long]] = stream
-  .keyBy(0)
+  .keyBy(_._1)
   .process(new CountWithTimeoutFunction())
 
 /**
@@ -249,10 +246,8 @@ class CountWithTimeoutFunction extends KeyedProcessFunction[Tuple, (String, Stri
 </div>
 </div>
 
-{% top %}
 
-
-**NOTE:** Before Flink 1.4.0, when called from a processing-time timer, the `ProcessFunction.onTimer()` method sets
+<span class="label label-info">Note</span> Before Flink 1.4.0, when called from a processing-time timer, the `ProcessFunction.onTimer()` method sets
 the current processing time as event-time timestamp. This behavior is very subtle and might not be noticed by users. Well, it's
 harmful because processing-time timestamps are indeterministic and not aligned with watermarks. Besides, user-implemented logic
 depends on this wrong timestamp highly likely is unintendedly faulty. So we've decided to fix it. Upon upgrading to 1.4.0, Flink jobs

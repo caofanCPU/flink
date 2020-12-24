@@ -31,6 +31,7 @@ import org.apache.flink.shaded.guava18.com.google.common.collect.Queues;
 import java.io.IOException;
 import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingDeque;
 
@@ -56,7 +57,7 @@ public class TestPooledBufferProvider implements BufferProvider {
 	}
 
 	@Override
-	public Buffer requestBuffer() throws IOException {
+	public Buffer requestBuffer() {
 		final Buffer buffer = buffers.poll();
 		if (buffer != null) {
 			return buffer;
@@ -66,7 +67,20 @@ public class TestPooledBufferProvider implements BufferProvider {
 	}
 
 	@Override
-	public Buffer requestBufferBlocking() throws IOException, InterruptedException {
+	public BufferBuilder requestBufferBuilder() {
+		Buffer buffer = requestBuffer();
+		if (buffer != null) {
+			return new BufferBuilder(buffer.getMemorySegment(), buffer.getRecycler());
+		}
+		return null;
+	}
+
+	@Override
+	public BufferBuilder requestBufferBuilder(int targetChannel) {
+		return requestBufferBuilder();
+	}
+
+	private Buffer requestBufferBlocking() throws InterruptedException {
 		Buffer buffer = buffers.poll();
 		if (buffer != null) {
 			return buffer;
@@ -81,9 +95,14 @@ public class TestPooledBufferProvider implements BufferProvider {
 	}
 
 	@Override
-	public BufferBuilder requestBufferBuilderBlocking() throws IOException, InterruptedException {
+	public BufferBuilder requestBufferBuilderBlocking() throws InterruptedException {
 		Buffer buffer = requestBufferBlocking();
 		return new BufferBuilder(buffer.getMemorySegment(), buffer.getRecycler());
+	}
+
+	@Override
+	public BufferBuilder requestBufferBuilderBlocking(int targetChannel) throws InterruptedException {
+		return requestBufferBuilderBlocking();
 	}
 
 	@Override
@@ -97,8 +116,8 @@ public class TestPooledBufferProvider implements BufferProvider {
 	}
 
 	@Override
-	public int getMemorySegmentSize() {
-		return bufferFactory.getBufferSize();
+	public CompletableFuture<?> getAvailableFuture() {
+		return AVAILABLE;
 	}
 
 	public int getNumberOfAvailableBuffers() {

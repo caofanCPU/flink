@@ -20,6 +20,7 @@ package org.apache.flink.table.types.logical;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.table.api.ValidationException;
+import org.apache.flink.table.data.RowData;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
@@ -35,6 +36,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static org.apache.flink.table.utils.EncodingUtils.escapeIdentifier;
+import static org.apache.flink.table.utils.EncodingUtils.escapeSingleQuotes;
+
 /**
  * Logical type of a sequence of fields. A field consists of a field name, field type, and an optional
  * description. The most specific type of a row of a table is a row type. In this case, each column
@@ -44,16 +48,16 @@ import java.util.stream.Collectors;
  *
  * <p>The serialized string representation is {@code ROW<n0 t0 'd0', n1 t1 'd1', ...>} where
  * {@code n} is the unique name of a field, {@code t} is the logical type of a field, {@code d} is
- * the description of a field.
+ * the description of a field. {@code ROW(...)} is a synonym for being closer to the SQL standard.
  */
 @PublicEvolving
 public final class RowType extends LogicalType {
 
-	private static final String FORMAT = "ROW<%s>";
+	public static final String FORMAT = "ROW<%s>";
 
 	private static final Set<String> INPUT_OUTPUT_CONVERSION = conversionSet(
 		Row.class.getName(),
-		"org.apache.flink.table.dataformat.BaseRow");
+		RowData.class.getName());
 
 	private static final Class<?> DEFAULT_CONVERSION = Row.class;
 
@@ -62,9 +66,9 @@ public final class RowType extends LogicalType {
 	 */
 	public static final class RowField implements Serializable {
 
-		private static final String FIELD_FORMAT_WITH_DESCRIPTION = "%s %s '%s'";
+		public static final String FIELD_FORMAT_WITH_DESCRIPTION = "%s %s '%s'";
 
-		private static final String FIELD_FORMAT_NO_DESCRIPTION = "%s %s";
+		public static final String FIELD_FORMAT_NO_DESCRIPTION = "%s %s";
 
 		private final String name;
 
@@ -163,6 +167,27 @@ public final class RowType extends LogicalType {
 		return fields;
 	}
 
+	public List<String> getFieldNames() {
+		return fields.stream().map(RowField::getName).collect(Collectors.toList());
+	}
+
+	public LogicalType getTypeAt(int i) {
+		return fields.get(i).getType();
+	}
+
+	public int getFieldCount() {
+		return fields.size();
+	}
+
+	public int getFieldIndex(String fieldName) {
+		for (int i = 0; i < fields.size(); i++) {
+			if (fields.get(i).getName().equals(fieldName)) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
 	@Override
 	public LogicalType copy(boolean isNullable) {
 		return new RowType(
@@ -252,5 +277,29 @@ public final class RowType extends LogicalType {
 			throw new ValidationException(
 				String.format("Field names must be unique. Found duplicates: %s", duplicates));
 		}
+	}
+
+	public static RowType of(LogicalType... types) {
+		return of(true, types);
+	}
+
+	public static RowType of(boolean isNullable, LogicalType... types) {
+		final List<RowField> fields = new ArrayList<>();
+		for (int i = 0; i < types.length; i++) {
+			fields.add(new RowField("f" + i, types[i]));
+		}
+		return new RowType(isNullable, fields);
+	}
+
+	public static RowType of(LogicalType[] types, String[] names) {
+		return of(true, types, names);
+	}
+
+	public static RowType of(boolean nullable, LogicalType[] types, String[] names) {
+		List<RowField> fields = new ArrayList<>();
+		for (int i = 0; i < types.length; i++) {
+			fields.add(new RowField(names[i], types[i]));
+		}
+		return new RowType(nullable, fields);
 	}
 }

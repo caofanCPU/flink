@@ -19,7 +19,6 @@ package org.apache.flink.table.expressions
 
 import java.sql.{Date, Time, Timestamp}
 import java.util.{Calendar, TimeZone}
-
 import org.apache.calcite.avatica.util.TimeUnit
 import org.apache.calcite.rex.RexNode
 import org.apache.calcite.sql.SqlIntervalQualifier
@@ -27,9 +26,9 @@ import org.apache.calcite.sql.`type`.SqlTypeName
 import org.apache.calcite.sql.parser.SqlParserPos
 import org.apache.calcite.tools.RelBuilder
 import org.apache.calcite.util.{DateString, TimeString, TimestampString}
-import org.apache.flink.api.common.typeinfo.{BasicTypeInfo, SqlTimeTypeInfo, TypeInformation}
+import org.apache.flink.api.common.typeinfo.{BasicTypeInfo, LocalTimeTypeInfo, SqlTimeTypeInfo, TypeInformation}
 import org.apache.flink.table.calcite.FlinkTypeFactory
-import org.apache.flink.table.typeutils.{RowIntervalTypeInfo, TimeIntervalTypeInfo}
+import org.apache.flink.table.typeutils.TimeIntervalTypeInfo
 
 object Literal {
   private[flink] val UTC = TimeZone.getTimeZone("UTC")
@@ -60,7 +59,6 @@ case class Literal(value: Any, resultType: TypeInformation[_]) extends LeafExpre
     case _@SqlTimeTypeInfo.TIMESTAMP => value.toString + ".toTimestamp"
     case _@TimeIntervalTypeInfo.INTERVAL_MILLIS => value.toString + ".millis"
     case _@TimeIntervalTypeInfo.INTERVAL_MONTHS => value.toString + ".months"
-    case _@RowIntervalTypeInfo.INTERVAL_ROWS => value.toString + ".rows"
     case _ => s"Literal($value, $resultType)"
   }
 

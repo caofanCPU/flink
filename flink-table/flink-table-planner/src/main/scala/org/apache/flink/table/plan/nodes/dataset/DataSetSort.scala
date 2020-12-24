@@ -26,7 +26,8 @@ import org.apache.calcite.rel.metadata.RelMetadataQuery
 import org.apache.calcite.rel.{RelCollation, RelNode, RelWriter, SingleRel}
 import org.apache.calcite.rex.{RexLiteral, RexNode}
 import org.apache.flink.api.java.DataSet
-import org.apache.flink.table.api.{BatchQueryConfig, BatchTableEnvImpl, TableException}
+import org.apache.flink.table.api.internal.BatchTableEnvImpl
+import org.apache.flink.table.api.TableException
 import org.apache.flink.table.plan.nodes.CommonSort
 import org.apache.flink.table.runtime.aggregate.SortUtil.directionToOrder
 import org.apache.flink.table.runtime.{CountPartitionFunction, LimitFilterFunction}
@@ -79,9 +80,7 @@ class DataSetSort(
     }
   }
 
-  override def translateToPlan(
-      tableEnv: BatchTableEnvImpl,
-      queryConfig: BatchQueryConfig): DataSet[Row] = {
+  override def translateToPlan(tableEnv: BatchTableEnvImpl): DataSet[Row] = {
 
     if (fieldCollations.isEmpty) {
       throw new TableException("Limiting the result without sorting is not allowed " +
@@ -90,7 +89,7 @@ class DataSetSort(
 
     val config = tableEnv.getConfig
 
-    val inputDs = inp.asInstanceOf[DataSetRel].translateToPlan(tableEnv, queryConfig)
+    val inputDs = inp.asInstanceOf[DataSetRel].translateToPlan(tableEnv)
 
     val currentParallelism = inputDs.getExecutionEnvironment.getParallelism
     var partitionedDs = if (currentParallelism == 1) {

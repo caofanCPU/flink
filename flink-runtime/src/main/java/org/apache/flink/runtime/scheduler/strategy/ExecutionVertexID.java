@@ -20,6 +20,9 @@ package org.apache.flink.runtime.scheduler.strategy;
 
 import org.apache.flink.runtime.executiongraph.ExecutionVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
+import org.apache.flink.runtime.topology.VertexID;
+
+import org.apache.flink.shaded.netty4.io.netty.buffer.ByteBuf;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -27,7 +30,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * Id identifying {@link ExecutionVertex}.
  */
-public class ExecutionVertexID {
+public class ExecutionVertexID implements VertexID {
 	private final JobVertexID jobVertexId;
 
 	private final int subtaskIndex;
@@ -45,6 +48,17 @@ public class ExecutionVertexID {
 
 	public int getSubtaskIndex() {
 		return subtaskIndex;
+	}
+
+	public void writeTo(ByteBuf buf) {
+		jobVertexId.writeTo(buf);
+		buf.writeInt(subtaskIndex);
+	}
+
+	public static ExecutionVertexID fromByteBuf(ByteBuf buf) {
+		final JobVertexID jobVertexID = JobVertexID.fromByteBuf(buf);
+		final int subtaskIndex = buf.readInt();
+		return new ExecutionVertexID(jobVertexID, subtaskIndex);
 	}
 
 	@Override

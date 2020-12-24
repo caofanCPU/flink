@@ -19,7 +19,6 @@
 package org.apache.flink.table.types.logical.utils;
 
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.table.types.logical.AnyType;
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.BigIntType;
 import org.apache.flink.table.types.logical.BinaryType;
@@ -38,9 +37,11 @@ import org.apache.flink.table.types.logical.LogicalTypeVisitor;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.MultisetType;
 import org.apache.flink.table.types.logical.NullType;
+import org.apache.flink.table.types.logical.RawType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.SmallIntType;
 import org.apache.flink.table.types.logical.StructuredType;
+import org.apache.flink.table.types.logical.SymbolType;
 import org.apache.flink.table.types.logical.TimeType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.flink.table.types.logical.TinyIntType;
@@ -187,8 +188,13 @@ public abstract class LogicalTypeDefaultVisitor<R> implements LogicalTypeVisitor
 	}
 
 	@Override
-	public R visit(AnyType anyType) {
-		return defaultMethod(anyType);
+	public R visit(RawType<?> rawType) {
+		return defaultMethod(rawType);
+	}
+
+	@Override
+	public R visit(SymbolType<?> symbolType) {
+		return defaultMethod(symbolType);
 	}
 
 	@Override

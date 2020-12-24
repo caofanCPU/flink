@@ -18,15 +18,11 @@
 
 package org.apache.flink.table.runtime.batch.table
 
-import java.math.MathContext
-import java.sql.{Date, Time, Timestamp}
-import java.util
-
 import org.apache.flink.api.scala._
 import org.apache.flink.api.scala.util.CollectionDataSets
 import org.apache.flink.table.api.Types._
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.Literal
+import org.apache.flink.table.api._
+import org.apache.flink.table.api.bridge.scala._
 import org.apache.flink.table.expressions.utils._
 import org.apache.flink.table.functions.ScalarFunction
 import org.apache.flink.table.runtime.utils.TableProgramsTestBase.TableConfigMode
@@ -34,10 +30,15 @@ import org.apache.flink.table.runtime.utils.{TableProgramsCollectionTestBase, Ta
 import org.apache.flink.test.util.TestBaseUtils
 import org.apache.flink.test.util.TestBaseUtils.compareResultAsText
 import org.apache.flink.types.Row
+
 import org.junit.Assert.assertEquals
 import org.junit._
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
+
+import java.math.MathContext
+import java.sql.{Date, Time, Timestamp}
+import java.util
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -133,7 +134,7 @@ class CalcITCase(
 
     val ds = CollectionDataSets.get3TupleDataSet(env).toTable(tEnv, 'a, 'b, 'c)
 
-    val filterDs = ds.filter( Literal(false) )
+    val filterDs = ds.filter(false)
 
     val expected = "\n"
     val results = filterDs.toDataSet[Row].collect()
@@ -147,7 +148,7 @@ class CalcITCase(
 
     val ds = CollectionDataSets.get3TupleDataSet(env).toTable(tEnv, 'a, 'b, 'c)
 
-    val filterDs = ds.filter( Literal(true) )
+    val filterDs = ds.filter(true)
     val expected = "1,1,Hi\n" + "2,2,Hello\n" + "3,2,Hello world\n" + "4,3,Hello world, " +
       "how are you?\n" + "5,3,I am fine.\n" + "6,3,Luke Skywalker\n" + "7,4," +
       "Comment#1\n" + "8,4,Comment#2\n" + "9,4,Comment#3\n" + "10,4,Comment#4\n" + "11,5," +
@@ -440,7 +441,7 @@ class CalcITCase(
     UserDefinedFunctionTestUtils.setJobParameters(env, Map("string.value" -> "ABC"))
 
     val ds = CollectionDataSets.getSmall3TupleDataSet(env)
-    tEnv.registerDataSet("t1", ds, 'a, 'b, 'c)
+    tEnv.createTemporaryView("t1", ds, 'a, 'b, 'c)
 
     val sqlQuery = "SELECT c FROM t1 where RichFunc2(c)='ABC#Hello'"
 
@@ -461,7 +462,7 @@ class CalcITCase(
     tEnv.registerFunction("RichFunc3", new RichFunc3)
 
     val ds = CollectionDataSets.getSmall3TupleDataSet(env)
-    tEnv.registerDataSet("t1", ds, 'a, 'b, 'c)
+    tEnv.createTemporaryView("t1", ds, 'a, 'b, 'c)
 
     val sqlQuery = "SELECT c FROM t1 where RichFunc3(c)=true"
 
@@ -509,7 +510,7 @@ class CalcITCase(
     UserDefinedFunctionTestUtils.setJobParameters(env, Map("string.value" -> "Abc"))
 
     val ds = CollectionDataSets.getSmall3TupleDataSet(env)
-    tEnv.registerDataSet("t1", ds, 'a, 'b, 'c)
+    tEnv.createTemporaryView("t1", ds, 'a, 'b, 'c)
 
     val sqlQuery = "SELECT c FROM t1 where " +
       "RichFunc2(c)='Abc#Hello' or RichFunc1(a)=3 and b=2"
@@ -531,7 +532,7 @@ class CalcITCase(
     data.+=((2, 2L, "John#19"))
     data.+=((3, 2L, "Anna#44"))
     data.+=((4, 3L, "nosharp"))
-    val in = env.fromCollection(data).toTable(tableEnv).as('a, 'b, 'c)
+    val in = env.fromCollection(data).toTable(tableEnv).as("a", "b", "c")
 
     val func0 = new Func13("default")
     val func1 = new Func13("Sunny")

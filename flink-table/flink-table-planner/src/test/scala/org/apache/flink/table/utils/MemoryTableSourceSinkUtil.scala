@@ -18,22 +18,23 @@
 
 package org.apache.flink.table.utils
 
-import java.util
-
-import org.apache.flink.api.common.io.RichOutputFormat
+import org.apache.flink.api.common.io.{OutputFormat, RichOutputFormat}
 import org.apache.flink.api.common.typeinfo.TypeInformation
+import org.apache.flink.api.java.operators.DataSink
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.java.{DataSet, ExecutionEnvironment}
 import org.apache.flink.configuration.Configuration
-import org.apache.flink.streaming.api.datastream.DataStream
+import org.apache.flink.streaming.api.datastream.{DataStream, DataStreamSink}
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction
 import org.apache.flink.streaming.api.functions.source.SourceFunction
 import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext
 import org.apache.flink.table.api.TableSchema
-import org.apache.flink.table.sinks.{AppendStreamTableSink, BatchTableSink, TableSinkBase}
+import org.apache.flink.table.sinks._
 import org.apache.flink.table.sources._
 import org.apache.flink.types.Row
+
+import java.util
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -104,26 +105,51 @@ object MemoryTableSourceSinkUtil {
     with AppendStreamTableSink[Row] {
 
     override def getOutputType: TypeInformation[Row] = {
-      new RowTypeInfo(getFieldTypes, getFieldNames)
+      new RowTypeInfo(getTableSchema.getFieldTypes, getTableSchema.getFieldNames)
     }
 
     override protected def copy: TableSinkBase[Row] = {
       new UnsafeMemoryAppendTableSink
     }
 
-    override def emitDataSet(dataSet: DataSet[Row]): Unit = {
+    override def consumeDataSet(dataSet: DataSet[Row]): DataSink[_] = {
       dataSet
         .output(new MemoryCollectionOutputFormat)
-        .name(TableConnectorUtils.generateRuntimeName(this.getClass, getFieldNames))
+        .name(TableConnectorUtils.generateRuntimeName(this.getClass, getTableSchema.getFieldNames))
     }
 
-    override def emitDataStream(dataStream: DataStream[Row]): Unit = {
+    override def consumeDataStream(dataStream: DataStream[Row]): DataStreamSink[_] = {
       val inputParallelism = dataStream.getParallelism
       dataStream
         .addSink(new MemoryAppendSink)
         .setParallelism(inputParallelism)
-        .name(TableConnectorUtils.generateRuntimeName(this.getClass, getFieldNames))
+        .name(TableConnectorUtils.generateRuntimeName(this.getClass, getTableSchema.getFieldNames))
     }
+  }
+
+  final class UnsafeMemoryOutputFormatTableSink extends OutputFormatTableSink[Row] {
+
+    var fieldNames: Array[String] = _
+    var fieldTypes: Array[TypeInformation[_]] = _
+
+    override def getOutputType: TypeInformation[Row] = {
+      new RowTypeInfo(getTableSchema.getFieldTypes, getTableSchema.getFieldNames)
+    }
+
+    override def getOutputFormat: OutputFormat[Row] = new MemoryCollectionOutputFormat
+
+    override def configure(
+        fieldNames: Array[String],
+        fieldTypes: Array[TypeInformation[_]]): TableSink[Row] = {
+      val newSink = new UnsafeMemoryOutputFormatTableSink
+      newSink.fieldNames = fieldNames
+      newSink.fieldTypes = fieldTypes
+      newSink
+    }
+
+    override def getFieldNames: Array[String] = fieldNames
+
+    override def getFieldTypes: Array[TypeInformation[_]] = fieldTypes
   }
 
   private class MemoryAppendSink extends RichSinkFunction[Row]() {

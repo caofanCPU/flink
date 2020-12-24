@@ -19,9 +19,10 @@
 package org.apache.flink.table.api.batch.table
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.utils.TableTestUtil._
+import org.apache.flink.table.api._
 import org.apache.flink.table.utils.TableTestBase
+import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 /**
@@ -41,7 +42,7 @@ class AggregateTest extends TableTestBase {
 
     val calcNode = unaryNode(
       "DataSetCalc",
-      batchTableNode(0),
+      batchTableNode(sourceTable),
       term("select", "a", "b", "c"),
       term("where", "=(a, 1)")
     )
@@ -52,9 +53,9 @@ class AggregateTest extends TableTestBase {
       term("groupBy", "a"),
       term("select",
         "a",
-        "AVG(a) AS TMP_0",
-        "SUM(b) AS TMP_1",
-        "COUNT(c) AS TMP_2")
+        "AVG(a) AS EXPR$0",
+        "SUM(b) AS EXPR$1",
+        "COUNT(c) AS EXPR$2")
     )
 
     util.verifyTable(resultTable,expected)
@@ -68,11 +69,11 @@ class AggregateTest extends TableTestBase {
 
     val expected = unaryNode(
       "DataSetAggregate",
-      batchTableNode(0),
+      batchTableNode(sourceTable),
       term("select",
-        "AVG(a) AS TMP_0",
-        "SUM(b) AS TMP_1",
-        "COUNT(c) AS TMP_2")
+        "AVG(a) AS EXPR$0",
+        "SUM(b) AS EXPR$1",
+        "COUNT(c) AS EXPR$2")
     )
     util.verifyTable(resultTable, expected)
   }
@@ -87,7 +88,7 @@ class AggregateTest extends TableTestBase {
 
     val calcNode = unaryNode(
       "DataSetCalc",
-      batchTableNode(0),
+      batchTableNode(sourceTable),
       // ReduceExpressionsRule will add cast for Project node by force
       // if the input of the Project node has constant expression.
       term("select", "CAST(1) AS a", "b", "c"),
@@ -98,9 +99,9 @@ class AggregateTest extends TableTestBase {
       "DataSetAggregate",
       calcNode,
       term("select",
-        "AVG(a) AS TMP_0",
-        "SUM(b) AS TMP_1",
-        "COUNT(c) AS TMP_2")
+        "AVG(a) AS EXPR$0",
+        "SUM(b) AS EXPR$1",
+        "COUNT(c) AS EXPR$2")
     )
 
     util.verifyTable(resultTable, expected)
@@ -116,7 +117,7 @@ class AggregateTest extends TableTestBase {
 
     val calcNode = unaryNode(
       "DataSetCalc",
-      batchTableNode(0),
+      batchTableNode(sourceTable),
       // ReduceExpressionsRule will add cast for Project node by force
       // if the input of the Project node has constant expression.
       term("select", "CAST(1) AS a", "b", "c", "c._1 AS $f3"),
@@ -128,10 +129,10 @@ class AggregateTest extends TableTestBase {
       calcNode,
       term(
         "select",
-        "AVG(a) AS TMP_0",
-        "SUM(b) AS TMP_1",
-        "COUNT(c) AS TMP_2",
-        "SUM($f3) AS TMP_3")
+        "AVG(a) AS EXPR$0",
+        "SUM(b) AS EXPR$1",
+        "COUNT(c) AS EXPR$2",
+        "SUM($f3) AS EXPR$3")
     )
     util.verifyTable(resultTable, expected)
   }

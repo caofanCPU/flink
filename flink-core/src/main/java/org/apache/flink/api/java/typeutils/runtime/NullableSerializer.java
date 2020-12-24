@@ -218,7 +218,7 @@ public class NullableSerializer<T> extends TypeSerializer<T> {
 
 	@Override
 	public void copy(DataInputView source, DataOutputView target) throws IOException {
-		boolean isNull = source.readBoolean();
+		boolean isNull = deserializeNull(source);
 		target.writeBoolean(isNull);
 		if (isNull) {
 			target.write(padding);
@@ -310,7 +310,7 @@ public class NullableSerializer<T> extends TypeSerializer<T> {
 		private NullableSerializerSnapshot(int nullPaddingLength) {
 			super(NullableSerializer.class);
 			checkArgument(nullPaddingLength >= 0,
-				"Computed NULL padding can not be negative. %d",
+				"Computed NULL padding can not be negative. %s",
 				nullPaddingLength);
 
 			this.nullPaddingLength = nullPaddingLength;
@@ -329,7 +329,7 @@ public class NullableSerializer<T> extends TypeSerializer<T> {
 		@Override
 		protected NullableSerializer<T> createOuterSerializerWithNestedSerializers(TypeSerializer<?>[] nestedSerializers) {
 			checkState(nullPaddingLength >= 0,
-				"Negative padding size after serializer construction: %d",
+				"Negative padding size after serializer construction: %s",
 				nullPaddingLength);
 
 			final byte[] padding = (nullPaddingLength == 0) ? EMPTY_BYTE_ARRAY : new byte[nullPaddingLength];
@@ -348,8 +348,10 @@ public class NullableSerializer<T> extends TypeSerializer<T> {
 		}
 
 		@Override
-		protected boolean isOuterSnapshotCompatible(NullableSerializer<T> newSerializer) {
-			return nullPaddingLength == newSerializer.nullPaddingLength();
+		protected OuterSchemaCompatibility resolveOuterSchemaCompatibility(NullableSerializer<T> newSerializer) {
+			return (nullPaddingLength == newSerializer.nullPaddingLength())
+				? OuterSchemaCompatibility.COMPATIBLE_AS_IS
+				: OuterSchemaCompatibility.INCOMPATIBLE;
 		}
 	}
 

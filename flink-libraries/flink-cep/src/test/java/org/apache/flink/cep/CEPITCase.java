@@ -30,8 +30,8 @@ import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.RichIterativeCondition;
 import org.apache.flink.cep.pattern.conditions.SimpleCondition;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.DataStreamUtils;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
@@ -40,6 +40,7 @@ import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.test.util.AbstractTestBase;
 import org.apache.flink.types.Either;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.OutputTag;
 
 import org.junit.Test;
 
@@ -102,7 +103,7 @@ public class CEPITCase extends AbstractTestBase {
 			}
 		});
 
-		DataStream<String> result = CEP.pattern(input, pattern).flatSelect((p, o) -> {
+		DataStream<String> result = CEP.pattern(input, pattern).inProcessingTime().flatSelect((p, o) -> {
 			StringBuilder builder = new StringBuilder();
 
 			builder.append(p.get("start").get(0).getId()).append(",")
@@ -172,7 +173,7 @@ public class CEPITCase extends AbstractTestBase {
 				}
 			});
 
-		DataStream<String> result = CEP.pattern(input, pattern).select(p -> {
+		DataStream<String> result = CEP.pattern(input, pattern).inProcessingTime().select(p -> {
 			StringBuilder builder = new StringBuilder();
 
 			builder.append(p.get("start").get(0).getId()).append(",")
@@ -194,7 +195,6 @@ public class CEPITCase extends AbstractTestBase {
 	@Test
 	public void testSimplePatternEventTime() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		// (Event, timestamp)
 		DataStream<Event> input = env.fromElements(
@@ -273,7 +273,6 @@ public class CEPITCase extends AbstractTestBase {
 	@Test
 	public void testSimpleKeyedPatternEventTime() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 		env.setParallelism(2);
 
 		// (Event, timestamp)
@@ -363,6 +362,7 @@ public class CEPITCase extends AbstractTestBase {
 	@Test
 	public void testSimplePatternWithSingleState() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
 		DataStream<Tuple2<Integer, Integer>> input = env.fromElements(
 			new Tuple2<>(0, 1),
 			new Tuple2<>(0, 2));
@@ -376,7 +376,7 @@ public class CEPITCase extends AbstractTestBase {
 					}
 				});
 
-		PatternStream<Tuple2<Integer, Integer>> pStream = CEP.pattern(input, pattern);
+		PatternStream<Tuple2<Integer, Integer>> pStream = CEP.pattern(input, pattern).inProcessingTime();
 
 		DataStream<Tuple2<Integer, Integer>> result = pStream.select(new PatternSelectFunction<Tuple2<Integer, Integer>, Tuple2<Integer, Integer>>() {
 			@Override
@@ -401,7 +401,7 @@ public class CEPITCase extends AbstractTestBase {
 
 		Pattern<Integer, ?> pattern = Pattern.<Integer>begin("start").followedByAny("end").within(Time.days(1));
 
-		DataStream<Integer> result = CEP.pattern(input, pattern).select(new PatternSelectFunction<Integer, Integer>() {
+		DataStream<Integer> result = CEP.pattern(input, pattern).inProcessingTime().select(new PatternSelectFunction<Integer, Integer>() {
 			@Override
 			public Integer select(Map<String, List<Integer>> pattern) throws Exception {
 				return pattern.get("start").get(0) + pattern.get("end").get(0);
@@ -419,7 +419,6 @@ public class CEPITCase extends AbstractTestBase {
 	public void testTimeoutHandling() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(1);
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		// (Event, timestamp)
 		DataStream<Event> input = env.fromElements(
@@ -551,7 +550,7 @@ public class CEPITCase extends AbstractTestBase {
 				}
 			});
 
-		DataStream<String> result = CEP.pattern(input, pattern).select(new PatternSelectFunction<Event, String>() {
+		DataStream<String> result = CEP.pattern(input, pattern).inProcessingTime().select(new PatternSelectFunction<Event, String>() {
 
 			@Override
 			public String select(Map<String, List<Event>> pattern) {
@@ -591,7 +590,6 @@ public class CEPITCase extends AbstractTestBase {
 	@Test
 	public void testSimplePatternEventTimeWithComparator() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		// (Event, timestamp)
 		DataStream<Event> input = env.fromElements(
@@ -687,6 +685,7 @@ public class CEPITCase extends AbstractTestBase {
 	@Test
 	public void testSimpleAfterMatchSkip() throws Exception {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
 		DataStream<Tuple2<Integer, String>> input = env.fromElements(
 			new Tuple2<>(1, "a"),
 			new Tuple2<>(2, "a"),
@@ -702,7 +701,7 @@ public class CEPITCase extends AbstractTestBase {
 					}
 				}).times(2);
 
-		PatternStream<Tuple2<Integer, String>> pStream = CEP.pattern(input, pattern);
+		PatternStream<Tuple2<Integer, String>> pStream = CEP.pattern(input, pattern).inProcessingTime();
 
 		DataStream<Tuple2<Integer, String>> result = pStream.select(new PatternSelectFunction<Tuple2<Integer, String>, Tuple2<Integer, String>>() {
 			@Override
@@ -761,7 +760,7 @@ public class CEPITCase extends AbstractTestBase {
 		});
 
 		DataStream<String> result =
-			CEP.pattern(input, pattern).flatSelect(new RichPatternFlatSelectFunction<Event, String>() {
+			CEP.pattern(input, pattern).inProcessingTime().flatSelect(new RichPatternFlatSelectFunction<Event, String>() {
 
 				@Override
 				public void open(Configuration config) {
@@ -848,7 +847,7 @@ public class CEPITCase extends AbstractTestBase {
 				}
 			});
 
-		DataStream<String> result = CEP.pattern(input, pattern).select(new RichPatternSelectFunction<Event, String>() {
+		DataStream<String> result = CEP.pattern(input, pattern).inProcessingTime().select(new RichPatternSelectFunction<Event, String>() {
 			@Override
 			public void open(Configuration config) {
 				try {
@@ -883,5 +882,33 @@ public class CEPITCase extends AbstractTestBase {
 		resultList.sort(String::compareTo);
 
 		assertEquals(Arrays.asList("2,2,2", "3,3,3", "42,42,42"), resultList);
+	}
+
+	@Test
+	public void testFlatSelectSerializationWithAnonymousClass() throws Exception {
+		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+		DataStreamSource<Integer> elements = env.fromElements(1, 2, 3);
+		OutputTag<Integer> outputTag = new OutputTag<Integer>("AAA") {};
+		CEP.pattern(elements, Pattern.begin("A")).inProcessingTime().flatSelect(
+			outputTag,
+			new PatternFlatTimeoutFunction<Integer, Integer>() {
+				@Override
+				public void timeout(
+					Map<String, List<Integer>> pattern,
+					long timeoutTimestamp,
+					Collector<Integer> out) throws Exception {
+
+				}
+			},
+			new PatternFlatSelectFunction<Integer, Object>() {
+				@Override
+				public void flatSelect(Map<String, List<Integer>> pattern, Collector<Object> out) throws Exception {
+
+				}
+			}
+		);
+
+		env.execute();
 	}
 }

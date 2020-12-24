@@ -23,25 +23,28 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-This page briefly discusses how to test a Flink application in your IDE or a local environment.
+测试是每个软件开发过程中不可或缺的一部分， Apache Flink 同样提供了在测试金字塔的多个级别上测试应用程序代码的工具。
 
 * This will be replaced by the TOC
 {:toc}
 
-## Unit testing
+## 测试用户自定义函数
 
-Usually, one can assume that Flink produces correct results outside of a user-defined `Function`. Therefore, it is recommended to test `Function` classes that contain the main business logic with unit tests as much as possible.
+通常，我们可以假设 Flink 在用户自定义函数之外产生了正确的结果。因此，建议尽可能多的用单元测试来测试那些包含主要业务逻辑的类。
 
-For example if one implements the following `ReduceFunction`:
+### 单元测试无状态、无时间限制的 UDF
+
+
+例如，让我们以以下无状态的 `MapFunction` 为例。
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-public class SumReduce implements ReduceFunction<Long> {
+public class IncrementMapFunction implements MapFunction<Long, Long> {
 
     @Override
-    public Long reduce(Long value1, Long value2) throws Exception {
-        return value1 + value2;
+    public Long map(Long record) throws Exception {
+        return record + 1;
     }
 }
 {% endhighlight %}
@@ -49,30 +52,30 @@ public class SumReduce implements ReduceFunction<Long> {
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-class SumReduce extends ReduceFunction[Long] {
+class IncrementMapFunction extends MapFunction[Long, Long] {
 
-    override def reduce(value1: java.lang.Long, value2: java.lang.Long): java.lang.Long = {
-        value1 + value2
+    override def map(record: Long): Long = {
+        record + 1
     }
 }
 {% endhighlight %}
 </div>
 </div>
 
-It is very easy to unit test it with your favorite framework by passing suitable arguments and verify the output:
+通过传递合适地参数并验证输出，你可以很容易的使用你喜欢的测试框架对这样的函数进行单元测试。
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-public class SumReduceTest {
+public class IncrementMapFunctionTest {
 
     @Test
-    public void testSum() throws Exception {
+    public void testIncrement() throws Exception {
         // instantiate your function
-        SumReduce sumReduce = new SumReduce();
+        IncrementMapFunction incrementer = new IncrementMapFunction();
 
         // call the methods that you have implemented
-        assertEquals(42L, sumReduce.reduce(40L, 2L));
+        assertEquals(3L, incrementer.map(2L));
     }
 }
 {% endhighlight %}
@@ -80,25 +83,347 @@ public class SumReduceTest {
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-class SumReduceTest extends FlatSpec with Matchers {
+class IncrementMapFunctionTest extends FlatSpec with Matchers {
 
-    "SumReduce" should "add values" in {
+    "IncrementMapFunction" should "increment values" in {
         // instantiate your function
-        val sumReduce: SumReduce = new SumReduce()
+        val incrementer: IncrementMapFunction = new IncrementMapFunction()
 
         // call the methods that you have implemented
-        sumReduce.reduce(40L, 2L) should be (42L)
+        incremeter.map(2) should be (3)
     }
 }
 {% endhighlight %}
 </div>
 </div>
 
-## Integration testing
+类似地，对于使用 `org.apache.flink.util.Collector` 的用户自定义函数（例如`FlatMapFunction` 或者 `ProcessFunction`），可以通过提供模拟对象而不是真正的 collector 来轻松测试。具有与 `IncrementMapFunction` 相同功能的 `FlatMapFunction` 可以按照以下方式进行单元测试。
 
-In order to end-to-end test Flink streaming pipelines, you can also write integration tests that are executed against a local Flink mini cluster.
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+public class IncrementFlatMapFunctionTest {
 
-In order to do so add the test dependency `flink-test-utils`:
+    @Test
+    public void testIncrement() throws Exception {
+        // instantiate your function
+        IncrementFlatMapFunction incrementer = new IncrementFlatMapFunction();
+
+        Collector<Integer> collector = mock(Collector.class);
+
+        // call the methods that you have implemented
+        incrementer.flatMap(2L, collector);
+
+        //verify collector was called with the right output
+        Mockito.verify(collector, times(1)).collect(3L);
+    }
+}
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+class IncrementFlatMapFunctionTest extends FlatSpec with MockFactory {
+
+    "IncrementFlatMapFunction" should "increment values" in {
+       // instantiate your function
+      val incrementer : IncrementFlatMapFunction = new IncrementFlatMapFunction()
+
+      val collector = mock[Collector[Integer]]
+
+      //verify collector was called with the right output
+      (collector.collect _).expects(3)
+
+      // call the methods that you have implemented
+      flattenFunction.flatMap(2, collector)
+  }
+}
+{% endhighlight %}
+</div>
+</div>
+
+### 对有状态或及时 UDF 和自定义算子进行单元测试
+
+对使用管理状态或定时器的用户自定义函数的功能测试会更加困难，因为它涉及到测试用户代码和 Flink 运行时的交互。
+为此，Flink 提供了一组所谓的测试工具，可用于测试用户自定义函数和自定义算子：
+
+* `OneInputStreamOperatorTestHarness` (适用于 `DataStream` 上的算子)
+* `KeyedOneInputStreamOperatorTestHarness` (适用于 `KeyedStream` 上的算子)
+* `TwoInputStreamOperatorTestHarness` (f适用于两个 `DataStream` 的 `ConnectedStreams` 算子)
+* `KeyedTwoInputStreamOperatorTestHarness` (适用于两个 `KeyedStream` 上的 `ConnectedStreams` 算子)
+
+要使用测试工具，还需要一组其他的依赖项（测试范围）。
+
+{% highlight xml %}
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-test-utils{{ site.scala_version_suffix }}</artifactId>
+  <version>{{site.version }}</version>
+  <scope>test</scope>
+</dependency>
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-runtime{{ site.scala_version_suffix }}</artifactId>
+  <version>{{site.version }}</version>
+  <scope>test</scope>
+  <classifier>tests</classifier>
+</dependency>
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-streaming-java{{ site.scala_version_suffix }}</artifactId>
+  <version>{{site.version }}</version>
+  <scope>test</scope>
+  <classifier>tests</classifier>
+</dependency>
+{% endhighlight %}
+
+现在，可以使用测试工具将记录和 watermark 推送到用户自定义函数或自定义算子中，控制处理时间，最后对算子的输出（包括旁路输出）进行校验。
+
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+
+public class StatefulFlatMapTest {
+    private OneInputStreamOperatorTestHarness<Long, Long> testHarness;
+    private StatefulFlatMap statefulFlatMapFunction;
+
+    @Before
+    public void setupTestHarness() throws Exception {
+
+        //instantiate user-defined function
+        statefulFlatMapFunction = new StatefulFlatMapFunction();
+
+        // wrap user defined function into a the corresponding operator
+        testHarness = new OneInputStreamOperatorTestHarness<>(new StreamFlatMap<>(statefulFlatMapFunction));
+
+        // optionally configured the execution environment
+        testHarness.getExecutionConfig().setAutoWatermarkInterval(50);
+
+        // open the test harness (will also call open() on RichFunctions)
+        testHarness.open();
+    }
+
+    @Test
+    public void testingStatefulFlatMapFunction() throws Exception {
+
+        //push (timestamped) elements into the operator (and hence user defined function)
+        testHarness.processElement(2L, 100L);
+
+        //trigger event time timers by advancing the event time of the operator with a watermark
+        testHarness.processWatermark(100L);
+
+        //trigger processing time timers by advancing the processing time of the operator directly
+        testHarness.setProcessingTime(100L);
+
+        //retrieve list of emitted records for assertions
+        assertThat(testHarness.getOutput(), containsInExactlyThisOrder(3L));
+
+        //retrieve list of records emitted to a specific side output for assertions (ProcessFunction only)
+        //assertThat(testHarness.getSideOutput(new OutputTag<>("invalidRecords")), hasSize(0))
+    }
+}
+
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+class StatefulFlatMapFunctionTest extends FlatSpec with Matchers with BeforeAndAfter {
+
+  private var testHarness: OneInputStreamOperatorTestHarness[Long, Long] = null
+  private var statefulFlatMap: StatefulFlatMapFunction = null
+
+  before {
+    //instantiate user-defined function
+    statefulFlatMap = new StatefulFlatMap
+
+    // wrap user defined function into a the corresponding operator
+    testHarness = new OneInputStreamOperatorTestHarness[Long, Long](new StreamFlatMap(statefulFlatMap))
+
+    // optionally configured the execution environment
+    testHarness.getExecutionConfig().setAutoWatermarkInterval(50);
+
+    // open the test harness (will also call open() on RichFunctions)
+    testHarness.open();
+  }
+
+  "StatefulFlatMap" should "do some fancy stuff with timers and state" in {
+
+
+    //push (timestamped) elements into the operator (and hence user defined function)
+    testHarness.processElement(2, 100);
+
+    //trigger event time timers by advancing the event time of the operator with a watermark
+    testHarness.processWatermark(100);
+
+    //trigger proccesign time timers by advancing the processing time of the operator directly
+    testHarness.setProcessingTime(100);
+
+    //retrieve list of emitted records for assertions
+    testHarness.getOutput should contain (3)
+
+    //retrieve list of records emitted to a specific side output for assertions (ProcessFunction only)
+    //testHarness.getSideOutput(new OutputTag[Int]("invalidRecords")) should have size 0
+  }
+}
+{% endhighlight %}
+</div>
+</div>
+
+`KeyedOneInputStreamOperatorTestHarness` 和 `KeyedTwoInputStreamOperatorTestHarness` 可以通过为键的类另外提供一个包含 `TypeInformation` 的 `KeySelector` 来实例化。
+
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+
+public class StatefulFlatMapFunctionTest {
+    private OneInputStreamOperatorTestHarness<String, Long, Long> testHarness;
+    private StatefulFlatMap statefulFlatMapFunction;
+
+    @Before
+    public void setupTestHarness() throws Exception {
+
+        //instantiate user-defined function
+        statefulFlatMapFunction = new StatefulFlatMapFunction();
+
+        // wrap user defined function into a the corresponding operator
+        testHarness = new KeyedOneInputStreamOperatorTestHarness<>(new StreamFlatMap<>(statefulFlatMapFunction), new MyStringKeySelector(), Types.STRING);
+
+        // open the test harness (will also call open() on RichFunctions)
+        testHarness.open();
+    }
+
+    //tests
+
+}
+
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+class StatefulFlatMapTest extends FlatSpec with Matchers with BeforeAndAfter {
+
+  private var testHarness: OneInputStreamOperatorTestHarness[String, Long, Long] = null
+  private var statefulFlatMapFunction: FlattenFunction = null
+
+  before {
+    //instantiate user-defined function
+    statefulFlatMapFunction = new StateFulFlatMap
+
+    // wrap user defined function into a the corresponding operator
+    testHarness = new KeyedOneInputStreamOperatorTestHarness(new StreamFlatMap(statefulFlatMapFunction),new MyStringKeySelector(), Types.STRING())
+
+    // open the test harness (will also call open() on RichFunctions)
+    testHarness.open();
+  }
+
+  //tests
+
+}
+{% endhighlight %}
+</div>
+</div>
+
+在 Flink 代码库里可以找到更多使用这些测试工具的示例，例如：
+
+* `org.apache.flink.streaming.runtime.operators.windowing.WindowOperatorTest` 是测试算子和用户自定义函数（取决于处理时间和事件时间）的一个很好的例子。
+* `org.apache.flink.streaming.api.functions.sink.filesystem.LocalStreamingFileSinkTest` 展示了如何使用 `AbstractStreamOperatorTestHarness` 测试自定义 sink。具体来说，它使用 `AbstractStreamOperatorTestHarness.snapshot` 和 `AbstractStreamOperatorTestHarness.initializeState` 来测试它与 Flink checkpoint 机制的交互。
+
+<span class="label label-info">注意</span> `AbstractStreamOperatorTestHarness` 及其派生类目前不属于公共 API，可以进行更改。
+
+#### 单元测试 Process Function
+
+考虑到它的重要性，除了之前可以直接用于测试 `ProcessFunction` 的测试工具之外，Flink 还提供了一个名为 `ProcessFunctionTestHarnesses` 的测试工具工厂类，可以简化测试工具的实例化。考虑以下示例：
+
+<span class="label label-info">注意</span> 要使用此测试工具，还需要引入上一节中介绍的依赖项。
+
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+public static class PassThroughProcessFunction extends ProcessFunction<Integer, Integer> {
+
+	@Override
+	public void processElement(Integer value, Context ctx, Collector<Integer> out) throws Exception {
+        out.collect(value);
+	}
+}
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+class PassThroughProcessFunction extends ProcessFunction[Integer, Integer] {
+
+    @throws[Exception]
+    override def processElement(value: Integer, ctx: ProcessFunction[Integer, Integer]#Context, out: Collector[Integer]): Unit = {
+      out.collect(value)
+    }
+}
+{% endhighlight %}
+</div>
+</div>
+
+通过传递合适的参数并验证输出，对使用 `ProcessFunctionTestHarnesses` 是很容易进行单元测试并验证输出。
+
+<div class="codetabs" markdown="1">
+<div data-lang="java" markdown="1">
+{% highlight java %}
+public class PassThroughProcessFunctionTest {
+
+    @Test
+    public void testPassThrough() throws Exception {
+
+        //instantiate user-defined function
+        PassThroughProcessFunction processFunction = new PassThroughProcessFunction();
+
+        // wrap user defined function into a the corresponding operator
+        OneInputStreamOperatorTestHarness<Integer, Integer> harness = ProcessFunctionTestHarnesses
+        	.forProcessFunction(processFunction);
+
+        //push (timestamped) elements into the operator (and hence user defined function)
+        harness.processElement(1, 10);
+
+        //retrieve list of emitted records for assertions
+        assertEquals(harness.extractOutputValues(), Collections.singletonList(1));
+    }
+}
+{% endhighlight %}
+</div>
+
+<div data-lang="scala" markdown="1">
+{% highlight scala %}
+class PassThroughProcessFunctionTest extends FlatSpec with Matchers {
+
+  "PassThroughProcessFunction" should "forward values" in {
+
+    //instantiate user-defined function
+    val processFunction = new PassThroughProcessFunction
+
+    // wrap user defined function into a the corresponding operator
+    val harness = ProcessFunctionTestHarnesses.forProcessFunction(processFunction)
+
+    //push (timestamped) elements into the operator (and hence user defined function)
+    harness.processElement(1, 10)
+
+    //retrieve list of emitted records for assertions
+    harness.extractOutputValues() should contain (1)
+  }
+}
+{% endhighlight %}
+</div>
+</div>
+
+有关如何使用 `ProcessFunctionTestHarnesses` 来测试 `ProcessFunction` 不同风格的更多示例，, 例如 `KeyedProcessFunction`，`KeyedCoProcessFunction`，`BroadcastProcessFunction`等，鼓励用户自行查看 `ProcessFunctionTestHarnessesTest`。
+
+## 测试 Flink 作业
+
+### JUnit 规则 `MiniClusterWithClientResource`
+
+Apache Flink 提供了一个名为 `MiniClusterWithClientResource` 的 Junit 规则，用于针对本地嵌入式小型集群测试完整的作业。
+叫做 `MiniClusterWithClientResource`.
+
+要使用 `MiniClusterWithClientResource`，需要添加一个额外的依赖项（测试范围）。
 
 {% highlight xml %}
 <dependency>
@@ -108,16 +433,16 @@ In order to do so add the test dependency `flink-test-utils`:
 </dependency>
 {% endhighlight %}
 
-For example, if you want to test the following `MapFunction`:
+让我们采用与前面几节相同的简单 `MapFunction`来做示例。
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-public class MultiplyByTwo implements MapFunction<Long, Long> {
+public class IncrementMapFunction implements MapFunction<Long, Long> {
 
     @Override
-    public Long map(Long value) throws Exception {
-        return value * 2;
+    public Long map(Long record) throws Exception {
+        return record + 1;
     }
 }
 {% endhighlight %}
@@ -125,53 +450,61 @@ public class MultiplyByTwo implements MapFunction<Long, Long> {
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-class MultiplyByTwo extends MapFunction[Long, Long] {
+class IncrementMapFunction extends MapFunction[Long, Long] {
 
-    override def map(value: Long): Long = {
-        value * 2
+    override def map(record: Long): Long = {
+        record + 1
     }
 }
 {% endhighlight %}
 </div>
 </div>
 
-You could write the following integration test:
+现在，可以在本地 Flink 集群使用这个 `MapFunction` 的简单 pipeline，如下所示。
 
 <div class="codetabs" markdown="1">
 <div data-lang="java" markdown="1">
 {% highlight java %}
-public class ExampleIntegrationTest extends AbstractTestBase {
+public class ExampleIntegrationTest {
+
+     @ClassRule
+     public static MiniClusterWithClientResource flinkCluster =
+         new MiniClusterWithClientResource(
+             new MiniClusterResourceConfiguration.Builder()
+                 .setNumberSlotsPerTaskManager(2)
+                 .setNumberTaskManagers(1)
+                 .build());
 
     @Test
-    public void testMultiply() throws Exception {
+    public void testIncrementPipeline() throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         // configure your test environment
-        env.setParallelism(1);
+        env.setParallelism(2);
 
         // values are collected in a static variable
         CollectSink.values.clear();
 
         // create a stream of custom elements and apply transformations
         env.fromElements(1L, 21L, 22L)
-                .map(new MultiplyByTwo())
+                .map(new IncrementMapFunction())
                 .addSink(new CollectSink());
 
         // execute
         env.execute();
 
         // verify your results
-        assertEquals(Lists.newArrayList(2L, 42L, 44L), CollectSink.values);
+        assertTrue(CollectSink.values.containsAll(2L, 22L, 23L));
     }
 
     // create a testing sink
     private static class CollectSink implements SinkFunction<Long> {
 
         // must be static
-        public static final List<Long> values = new ArrayList<>();
+        public static final List<Long> values = Collections.synchronizedList(new ArrayList<>());
 
         @Override
-        public synchronized void invoke(Long value) throws Exception {
+        public void invoke(Long value) throws Exception {
             values.add(value);
         }
     }
@@ -181,85 +514,74 @@ public class ExampleIntegrationTest extends AbstractTestBase {
 
 <div data-lang="scala" markdown="1">
 {% highlight scala %}
-class ExampleIntegrationTest extends AbstractTestBase {
+class StreamingJobIntegrationTest extends FlatSpec with Matchers with BeforeAndAfter {
 
-    @Test
-    def testMultiply(): Unit = {
-        val env = StreamExecutionEnvironment.getExecutionEnvironment
+  val flinkCluster = new MiniClusterWithClientResource(new MiniClusterResourceConfiguration.Builder()
+    .setNumberSlotsPerTaskManager(1)
+    .setNumberTaskManagers(1)
+    .build)
 
-        // configure your test environment
-        env.setParallelism(1)
+  before {
+    flinkCluster.before()
+  }
 
-        // values are collected in a static variable
-        CollectSink.values.clear()
+  after {
+    flinkCluster.after()
+  }
 
-        // create a stream of custom elements and apply transformations
-        env
-            .fromElements(1L, 21L, 22L)
-            .map(new MultiplyByTwo())
-            .addSink(new CollectSink())
 
-        // execute
-        env.execute()
+  "IncrementFlatMapFunction pipeline" should "incrementValues" in {
 
-        // verify your results
-        assertEquals(Lists.newArrayList(2L, 42L, 44L), CollectSink.values)
+    val env = StreamExecutionEnvironment.getExecutionEnvironment
+
+    // configure your test environment
+    env.setParallelism(2)
+
+    // values are collected in a static variable
+    CollectSink.values.clear()
+
+    // create a stream of custom elements and apply transformations
+    env.fromElements(1, 21, 22)
+       .map(new IncrementMapFunction())
+       .addSink(new CollectSink())
+
+    // execute
+    env.execute()
+
+    // verify your results
+    CollectSink.values should contain allOf (2, 22, 23)
     }
-}    
-
+}
 // create a testing sink
 class CollectSink extends SinkFunction[Long] {
 
-    override def invoke(value: java.lang.Long): Unit = {
-        synchronized {
-            values.add(value)
-        }
-    }
+  override def invoke(value: Long): Unit = {
+    CollectSink.values.add(value)
+  }
 }
 
 object CollectSink {
-
     // must be static
-    val values: List[Long] = new ArrayList()
+    val values: util.List[Long] = Collections.synchronizedList(new util.ArrayList())
 }
 {% endhighlight %}
 </div>
 </div>
 
-The static variable in `CollectSink` is used here because Flink serializes all operators before distributing them across a cluster.
-Communicating with operators instantiated by a local Flink mini cluster via static variables is one way around this issue.
-Alternatively, you could for example write the data to files in a temporary directory with your test sink.
-You can also implement your own custom sources for emitting watermarks.
+关于使用 `MiniClusterWithClientResource` 进行集成测试的几点备注：
 
-## Testing checkpointing and state handling
+* 为了不将整个 pipeline 代码从生产复制到测试，请将你的 source 和 sink 在生产代码中设置成可插拔的，并在测试中注入特殊的测试 source 和测试 sink。
 
-One way to test state handling is to enable checkpointing in integration tests. 
+* 这里使用 `CollectSink` 中的静态变量，是因为Flink 在将所有算子分布到整个集群之前先对其进行了序列化。
+解决此问题的一种方法是与本地 Flink 小型集群通过实例化算子的静态变量进行通信。
+或者，你可以使用测试的 sink 将数据写入临时目录的文件中。
 
-You can do that by configuring your `StreamExecutionEnvironment` in the test:
+* 如果你的作业使用事件时间计时器，则可以实现自定义的 *并行* 源函数来发出 watermark。
 
-<div class="codetabs" markdown="1">
-<div data-lang="java" markdown="1">
-{% highlight java %}
-env.enableCheckpointing(500);
-env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 100));
-{% endhighlight %}
-</div>
+* 建议始终以 parallelism > 1 的方式在本地测试 pipeline，以识别只有在并行执行 pipeline 时才会出现的 bug。
 
-<div data-lang="scala" markdown="1">
-{% highlight scala %}
-env.enableCheckpointing(500)
-env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 100))
-{% endhighlight %}
-</div>
-</div>
+* 优先使用 `@ClassRule` 而不是 `@Rule`，这样多个测试可以共享同一个 Flink 集群。这样做可以节省大量的时间，因为 Flink 集群的启动和关闭通常会占用实际测试的执行时间。
 
-And for example adding to your Flink application an identity mapper operator that will throw an exception
-once every `1000ms`. However writing such test could be tricky because of time dependencies between the actions.
-
-Another approach is to write a unit test using the Flink internal testing utility `AbstractStreamOperatorTestHarness` from the `flink-streaming-java` module.
-
-For an example of how to do that please have a look at the `org.apache.flink.streaming.runtime.operators.windowing.WindowOperatorTest` also in the `flink-streaming-java` module.
-
-Be aware that `AbstractStreamOperatorTestHarness` is currently not a part of public API and can be subject to change.
+* 如果你的 pipeline 包含自定义状态处理，则可以通过启用 checkpoint 并在小型集群中重新启动作业来测试其正确性。为此，你需要在 pipeline 中（仅测试）抛出用户自定义函数的异常来触发失败。
 
 {% top %}

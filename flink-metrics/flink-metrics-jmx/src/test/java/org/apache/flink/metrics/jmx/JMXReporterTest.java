@@ -19,16 +19,20 @@
 package org.apache.flink.metrics.jmx;
 
 import org.apache.flink.metrics.Gauge;
+import org.apache.flink.metrics.HistogramStatistics;
 import org.apache.flink.metrics.reporter.MetricReporter;
 import org.apache.flink.metrics.util.TestHistogram;
 import org.apache.flink.metrics.util.TestMeter;
+import org.apache.flink.runtime.management.JMXService;
 import org.apache.flink.runtime.metrics.MetricRegistryConfiguration;
 import org.apache.flink.runtime.metrics.MetricRegistryImpl;
 import org.apache.flink.runtime.metrics.ReporterSetup;
 import org.apache.flink.runtime.metrics.groups.FrontMetricGroup;
+import org.apache.flink.runtime.metrics.groups.ReporterScopedSettings;
 import org.apache.flink.runtime.metrics.groups.TaskManagerMetricGroup;
 import org.apache.flink.util.TestLogger;
 
+import org.junit.After;
 import org.junit.Test;
 
 import javax.management.MBeanAttributeInfo;
@@ -40,6 +44,7 @@ import javax.management.remote.JMXConnector;
 import javax.management.remote.JMXConnectorFactory;
 import javax.management.remote.JMXServiceURL;
 
+import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.util.Arrays;
 import java.util.Collections;
@@ -56,6 +61,11 @@ import static org.junit.Assert.assertTrue;
  * Tests for the JMXReporter.
  */
 public class JMXReporterTest extends TestLogger {
+
+	@After
+	public void shutdownService() throws IOException {
+		JMXService.stopInstance();
+	}
 
 	@Test
 	public void testReplaceInvalidChars() {
@@ -127,8 +137,8 @@ public class JMXReporterTest extends TestLogger {
 			}
 		};
 
-		rep1.notifyOfAddedMetric(g1, "rep1", new FrontMetricGroup<>(0, new TaskManagerMetricGroup(reg, "host", "tm")));
-		rep2.notifyOfAddedMetric(g2, "rep2", new FrontMetricGroup<>(0, new TaskManagerMetricGroup(reg, "host", "tm")));
+		rep1.notifyOfAddedMetric(g1, "rep1", new FrontMetricGroup<>(createReporterScopedSettings(0), mg));
+		rep2.notifyOfAddedMetric(g2, "rep2", new FrontMetricGroup<>(createReporterScopedSettings(0), mg));
 
 		MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
 
@@ -181,9 +191,9 @@ public class JMXReporterTest extends TestLogger {
 			}
 		};
 
-		rep1.notifyOfAddedMetric(g1, "rep1", new FrontMetricGroup<>(0, new TaskManagerMetricGroup(reg, "host", "tm")));
+		rep1.notifyOfAddedMetric(g1, "rep1", new FrontMetricGroup<>(createReporterScopedSettings(0), mg));
 
-		rep2.notifyOfAddedMetric(g2, "rep2", new FrontMetricGroup<>(1, new TaskManagerMetricGroup(reg, "host", "tm")));
+		rep2.notifyOfAddedMetric(g2, "rep2", new FrontMetricGroup<>(createReporterScopedSettings(1), mg));
 
 		ObjectName objectName1 = new ObjectName(JMX_DOMAIN_PREFIX + "taskmanager.rep1", JMXReporter.generateJmxTable(mg.getAllVariables()));
 		ObjectName objectName2 = new ObjectName(JMX_DOMAIN_PREFIX + "taskmanager.rep2", JMXReporter.generateJmxTable(mg.getAllVariables()));
@@ -203,6 +213,9 @@ public class JMXReporterTest extends TestLogger {
 
 		assertEquals(1, mCon2.getAttribute(objectName1, "Value"));
 		assertEquals(2, mCon2.getAttribute(objectName2, "Value"));
+
+		// JMX Server URL should be identical since we made it static.
+		assertEquals(url1, url2);
 
 		rep1.notifyOfRemovedMetric(g1, "rep1", null);
 		rep1.notifyOfRemovedMetric(g2, "rep2", null);
@@ -245,16 +258,17 @@ public class JMXReporterTest extends TestLogger {
 			assertEquals(11, attributeInfos.length);
 
 			assertEquals(histogram.getCount(), mBeanServer.getAttribute(objectName, "Count"));
-			assertEquals(histogram.getStatistics().getMean(), mBeanServer.getAttribute(objectName, "Mean"));
-			assertEquals(histogram.getStatistics().getStdDev(), mBeanServer.getAttribute(objectName, "StdDev"));
-			assertEquals(histogram.getStatistics().getMax(), mBeanServer.getAttribute(objectName, "Max"));
-			assertEquals(histogram.getStatistics().getMin(), mBeanServer.getAttribute(objectName, "Min"));
-			assertEquals(histogram.getStatistics().getQuantile(0.5), mBeanServer.getAttribute(objectName, "Median"));
-			assertEquals(histogram.getStatistics().getQuantile(0.75), mBeanServer.getAttribute(objectName, "75thPercentile"));
-			assertEquals(histogram.getStatistics().getQuantile(0.95), mBeanServer.getAttribute(objectName, "95thPercentile"));
-			assertEquals(histogram.getStatistics().getQuantile(0.98), mBeanServer.getAttribute(objectName, "98thPercentile"));
-			assertEquals(histogram.getStatistics().getQuantile(0.99), mBeanServer.getAttribute(objectName, "99thPercentile"));
-			assertEquals(histogram.getStatistics().getQuantile(0.999), mBeanServer.getAttribute(objectName, "999thPercentile"));
+			HistogramStatistics statistics = histogram.getStatistics();
+			assertEquals(statistics.getMean(), mBeanServer.getAttribute(objectName, "Mean"));
+			assertEquals(statistics.getStdDev(), mBeanServer.getAttribute(objectName, "StdDev"));
+			assertEquals(statistics.getMax(), mBeanServer.getAttribute(objectName, "Max"));
+			assertEquals(statistics.getMin(), mBeanServer.getAttribute(objectName, "Min"));
+			assertEquals(statistics.getQuantile(0.5), mBeanServer.getAttribute(objectName, "Median"));
+			assertEquals(statistics.getQuantile(0.75), mBeanServer.getAttribute(objectName, "75thPercentile"));
+			assertEquals(statistics.getQuantile(0.95), mBeanServer.getAttribute(objectName, "95thPercentile"));
+			assertEquals(statistics.getQuantile(0.98), mBeanServer.getAttribute(objectName, "98thPercentile"));
+			assertEquals(statistics.getQuantile(0.99), mBeanServer.getAttribute(objectName, "99thPercentile"));
+			assertEquals(statistics.getQuantile(0.999), mBeanServer.getAttribute(objectName, "999thPercentile"));
 
 		} finally {
 			if (registry != null) {
@@ -300,5 +314,9 @@ public class JMXReporterTest extends TestLogger {
 				registry.shutdown().get();
 			}
 		}
+	}
+
+	private static ReporterScopedSettings createReporterScopedSettings(int reporterIndex) {
+		return new ReporterScopedSettings(reporterIndex, ',', Collections.emptySet());
 	}
 }

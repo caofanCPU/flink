@@ -26,7 +26,6 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.typeutils.GenericTypeInfo;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataInputViewStreamWrapper;
-import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
@@ -122,8 +121,13 @@ public class KafkaITCase extends KafkaConsumerTestBase {
 	}
 
 	@Test(timeout = 60000)
-	public void testMultipleTopics() throws Exception {
-		runProduceConsumeMultipleTopics();
+	public void testMultipleTopicsWithLegacySerializer() throws Exception {
+		runProduceConsumeMultipleTopics(true);
+	}
+
+	@Test(timeout = 60000)
+	public void testMultipleTopicsWithKafkaSerializer() throws Exception {
+		runProduceConsumeMultipleTopics(false);
 	}
 
 	@Test(timeout = 60000)
@@ -175,6 +179,11 @@ public class KafkaITCase extends KafkaConsumerTestBase {
 		runAutoOffsetRetrievalAndCommitToKafka();
 	}
 
+	@Test(timeout = 60000)
+	public void testCollectingSchema() throws Exception {
+		runCollectingSchemaTest();
+	}
+
 	/**
 	 * Kafka 20 specific test, ensuring Timestamps are properly written to and read from Kafka.
 	 */
@@ -189,8 +198,6 @@ public class KafkaITCase extends KafkaConsumerTestBase {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(1);
 		env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
-		env.getConfig().disableSysoutLogging();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		DataStream<Long> streamWithTimestamps = env.addSource(new SourceFunction<Long>() {
 			private static final long serialVersionUID = -2255115836471289626L;
@@ -233,8 +240,6 @@ public class KafkaITCase extends KafkaConsumerTestBase {
 		env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setParallelism(1);
 		env.getConfig().setRestartStrategy(RestartStrategies.noRestart());
-		env.getConfig().disableSysoutLogging();
-		env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
 		FlinkKafkaConsumer<Long> kafkaSource = new FlinkKafkaConsumer<>(topic, new KafkaITCase.LimitedLongDeserializer(), standardProps);
 		kafkaSource.assignTimestampsAndWatermarks(new AssignerWithPunctuatedWatermarks<Long>() {

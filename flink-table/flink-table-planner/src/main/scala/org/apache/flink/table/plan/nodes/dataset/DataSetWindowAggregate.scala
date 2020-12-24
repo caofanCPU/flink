@@ -27,7 +27,8 @@ import org.apache.flink.api.common.operators.Order
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import org.apache.flink.api.java.DataSet
 import org.apache.flink.api.java.typeutils.{ResultTypeQueryable, RowTypeInfo}
-import org.apache.flink.table.api.{BatchQueryConfig, BatchTableEnvImpl, TableConfig}
+import org.apache.flink.table.api.internal.BatchTableEnvImpl
+import org.apache.flink.table.api.TableConfig
 import org.apache.flink.table.calcite.FlinkRelBuilder.NamedWindowProperty
 import org.apache.flink.table.calcite.FlinkTypeFactory
 import org.apache.flink.table.expressions.PlannerExpressionUtils._
@@ -106,14 +107,12 @@ class DataSetWindowAggregate(
     planner.getCostFactory.makeCost(rowCnt, rowCnt * aggCnt, rowCnt * rowSize)
   }
 
-  override def translateToPlan(
-      tableEnv: BatchTableEnvImpl,
-      queryConfig: BatchQueryConfig): DataSet[Row] = {
+  override def translateToPlan(tableEnv: BatchTableEnvImpl): DataSet[Row] = {
 
-    val inputDS = getInput.asInstanceOf[DataSetRel].translateToPlan(tableEnv, queryConfig)
+    val inputDS = getInput.asInstanceOf[DataSetRel].translateToPlan(tableEnv)
 
     // whether identifiers are matched case-sensitively
-    val caseSensitive = tableEnv.getFrameworkConfig.getParserConfig.caseSensitive()
+    val caseSensitive = tableEnv.getParserConfig.caseSensitive()
 
     window match {
       case TumblingGroupWindow(_, timeField, size)

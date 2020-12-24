@@ -21,15 +21,16 @@ package org.apache.flink.runtime.resourcemanager;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.runtime.clusterframework.types.ResourceID;
+import org.apache.flink.runtime.clusterframework.types.ResourceProfile;
 import org.apache.flink.runtime.heartbeat.HeartbeatServices;
 import org.apache.flink.runtime.highavailability.TestingHighAvailabilityServices;
 import org.apache.flink.runtime.instance.HardwareDescription;
+import org.apache.flink.runtime.io.network.partition.NoOpResourceManagerPartitionTracker;
 import org.apache.flink.runtime.jobmaster.utils.TestingJobMasterGateway;
 import org.apache.flink.runtime.jobmaster.utils.TestingJobMasterGatewayBuilder;
 import org.apache.flink.runtime.leaderelection.TestingLeaderElectionService;
 import org.apache.flink.runtime.leaderretrieval.LeaderRetrievalService;
 import org.apache.flink.runtime.leaderretrieval.SettableLeaderRetrievalService;
-import org.apache.flink.runtime.metrics.NoOpMetricRegistry;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.runtime.registration.RegistrationResponse;
 import org.apache.flink.runtime.resourcemanager.slotmanager.SlotManager;
@@ -38,6 +39,7 @@ import org.apache.flink.runtime.rest.messages.taskmanager.TaskManagerInfo;
 import org.apache.flink.runtime.rpc.RpcUtils;
 import org.apache.flink.runtime.rpc.TestingRpcService;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorGateway;
+import org.apache.flink.runtime.taskexecutor.TaskExecutorMemoryConfiguration;
 import org.apache.flink.runtime.taskexecutor.TestingTaskExecutorGatewayBuilder;
 import org.apache.flink.runtime.testingUtils.TestingUtils;
 import org.apache.flink.runtime.util.TestingFatalErrorHandler;
@@ -46,7 +48,6 @@ import org.apache.flink.util.function.ThrowingConsumer;
 
 import org.junit.After;
 import org.junit.AfterClass;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -55,9 +56,12 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeoutException;
 
+import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 
 /**
@@ -78,6 +82,8 @@ public class ResourceManagerTest extends TestLogger {
 		0L);
 
 	private static final int dataPort = 1234;
+
+	private static final int jmxPort = 23456;
 
 	private static TestingRpcService rpcService;
 
@@ -149,20 +155,27 @@ public class ResourceManagerTest extends TestLogger {
 
 		TaskManagerInfo taskManagerInfo = taskManagerInfoFuture.get();
 
-		Assert.assertEquals(taskManagerId, taskManagerInfo.getResourceId());
-		Assert.assertEquals(hardwareDescription, taskManagerInfo.getHardwareDescription());
-		Assert.assertEquals(taskExecutorGateway.getAddress(), taskManagerInfo.getAddress());
-		Assert.assertEquals(dataPort, taskManagerInfo.getDataPort());
-		Assert.assertEquals(0, taskManagerInfo.getNumberSlots());
-		Assert.assertEquals(0, taskManagerInfo.getNumberAvailableSlots());
+		assertEquals(taskManagerId, taskManagerInfo.getResourceId());
+		assertEquals(hardwareDescription, taskManagerInfo.getHardwareDescription());
+		assertEquals(taskExecutorGateway.getAddress(), taskManagerInfo.getAddress());
+		assertEquals(dataPort, taskManagerInfo.getDataPort());
+		assertEquals(jmxPort, taskManagerInfo.getJmxPort());
+		assertEquals(0, taskManagerInfo.getNumberSlots());
+		assertEquals(0, taskManagerInfo.getNumberAvailableSlots());
 	}
 
 	private void registerTaskExecutor(ResourceManagerGateway resourceManagerGateway, ResourceID taskExecutorId, String taskExecutorAddress) throws Exception {
-		final CompletableFuture<RegistrationResponse> registrationFuture = resourceManagerGateway.registerTaskExecutor(
+		TaskExecutorRegistration taskExecutorRegistration = new TaskExecutorRegistration(
 			taskExecutorAddress,
 			taskExecutorId,
 			dataPort,
+			jmxPort,
 			hardwareDescription,
+			new TaskExecutorMemoryConfiguration(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L),
+			ResourceProfile.ZERO,
+			ResourceProfile.ZERO);
+		final CompletableFuture<RegistrationResponse> registrationFuture = resourceManagerGateway.registerTaskExecutor(
+			taskExecutorRegistration,
 			TestingUtils.TIMEOUT());
 
 		assertThat(registrationFuture.get(), instanceOf(RegistrationResponse.Success.class));
@@ -198,7 +211,9 @@ public class ResourceManagerTest extends TestLogger {
 				assertThat(registrationFuture.get(), instanceOf(RegistrationResponse.Success.class));
 			},
 			resourceManagerResourceId -> {
-				assertThat(heartbeatRequestFuture.get(), is(equalTo(resourceManagerResourceId)));
+				// might have been completed or not depending whether the timeout was triggered first
+				final ResourceID optionalHeartbeatRequestOrigin = heartbeatRequestFuture.getNow(null);
+				assertThat(optionalHeartbeatRequestOrigin, anyOf(is(resourceManagerResourceId), is(nullValue())));
 				assertThat(disconnectFuture.get(), is(equalTo(resourceManagerId)));
 			});
 	}
@@ -219,7 +234,9 @@ public class ResourceManagerTest extends TestLogger {
 				registerTaskExecutor(resourceManagerGateway, taskExecutorId, taskExecutorGateway.getAddress());
 			},
 			resourceManagerResourceId -> {
-				assertThat(heartbeatRequestFuture.get(), is(equalTo(resourceManagerResourceId)));
+				// might have been completed or not depending whether the timeout was triggered first
+				final ResourceID optionalHeartbeatRequestOrigin = heartbeatRequestFuture.getNow(null);
+				assertThat(optionalHeartbeatRequestOrigin, anyOf(is(resourceManagerResourceId), is(nullValue())));
 				assertThat(disconnectFuture.get(), instanceOf(TimeoutException.class));
 			}
 		);
@@ -246,15 +263,14 @@ public class ResourceManagerTest extends TestLogger {
 
 		final TestingResourceManager resourceManager = new TestingResourceManager(
 			rpcService,
-			ResourceManager.RESOURCE_MANAGER_NAME + UUID.randomUUID(),
 			resourceManagerResourceId,
 			highAvailabilityServices,
 			heartbeatServices,
 			slotManager,
-			NoOpMetricRegistry.INSTANCE,
+			NoOpResourceManagerPartitionTracker::get,
 			jobLeaderIdService,
 			testingFatalErrorHandler,
-			UnregisteredMetricGroups.createUnregisteredJobManagerMetricGroup());
+			UnregisteredMetricGroups.createUnregisteredResourceManagerMetricGroup());
 
 		resourceManager.start();
 

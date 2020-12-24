@@ -21,6 +21,7 @@ package org.apache.flink.streaming.api.transformations;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
@@ -29,21 +30,21 @@ import org.apache.flink.streaming.api.operators.StreamOperatorFactory;
 
 import org.apache.flink.shaded.guava18.com.google.common.collect.Lists;
 
-import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * This Transformation represents the application of a
  * {@link org.apache.flink.streaming.api.operators.OneInputStreamOperator} to one input
- * {@link org.apache.flink.streaming.api.transformations.StreamTransformation}.
+ * {@link Transformation}.
  *
- * @param <IN> The type of the elements in the input {@code StreamTransformation}
+ * @param <IN> The type of the elements in the input {@code Transformation}
  * @param <OUT> The type of the elements that result from this {@code OneInputTransformation}
  */
 @Internal
-public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
+public class OneInputTransformation<IN, OUT> extends PhysicalTransformation<OUT> {
 
-	private final StreamTransformation<IN> input;
+	private final Transformation<IN> input;
 
 	private final StreamOperatorFactory<OUT> operatorFactory;
 
@@ -54,14 +55,14 @@ public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
 	/**
 	 * Creates a new {@code OneInputTransformation} from the given input and operator.
 	 *
-	 * @param input The input {@code StreamTransformation}
-	 * @param name The name of the {@code StreamTransformation}, this will be shown in Visualizations and the Log
+	 * @param input The input {@code Transformation}
+	 * @param name The name of the {@code Transformation}, this will be shown in Visualizations and the Log
 	 * @param operator The {@code TwoInputStreamOperator}
 	 * @param outputType The type of the elements produced by this {@code OneInputTransformation}
 	 * @param parallelism The parallelism of this {@code OneInputTransformation}
 	 */
 	public OneInputTransformation(
-			StreamTransformation<IN> input,
+			Transformation<IN> input,
 			String name,
 			OneInputStreamOperator<IN, OUT> operator,
 			TypeInformation<OUT> outputType,
@@ -70,7 +71,7 @@ public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
 	}
 
 	public OneInputTransformation(
-			StreamTransformation<IN> input,
+			Transformation<IN> input,
 			String name,
 			StreamOperatorFactory<OUT> operatorFactory,
 			TypeInformation<OUT> outputType,
@@ -78,13 +79,6 @@ public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
 		super(name, outputType, parallelism);
 		this.input = input;
 		this.operatorFactory = operatorFactory;
-	}
-
-	/**
-	 * Returns the input {@code StreamTransformation} of this {@code OneInputTransformation}.
-	 */
-	public StreamTransformation<IN> getInput() {
-		return input;
 	}
 
 	/**
@@ -113,6 +107,7 @@ public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
 	 */
 	public void setStateKeySelector(KeySelector<IN, ?> stateKeySelector) {
 		this.stateKeySelector = stateKeySelector;
+		updateManagedMemoryStateBackendUseCase(stateKeySelector != null);
 	}
 
 	/**
@@ -134,11 +129,16 @@ public class OneInputTransformation<IN, OUT> extends StreamTransformation<OUT> {
 	}
 
 	@Override
-	public Collection<StreamTransformation<?>> getTransitivePredecessors() {
-		List<StreamTransformation<?>> result = Lists.newArrayList();
+	public List<Transformation<?>> getTransitivePredecessors() {
+		List<Transformation<?>> result = Lists.newArrayList();
 		result.add(this);
 		result.addAll(input.getTransitivePredecessors());
 		return result;
+	}
+
+	@Override
+	public List<Transformation<?>> getInputs() {
+		return Collections.singletonList(input);
 	}
 
 	@Override

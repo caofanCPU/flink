@@ -18,6 +18,8 @@
 
 package org.apache.flink.table.factories;
 
+import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.sinks.BatchTableSink;
 import org.apache.flink.table.sinks.TableSink;
 
@@ -28,7 +30,13 @@ import java.util.Map;
  * string-based properties. See also {@link TableSinkFactory} for more information.
  *
  * @param <T> type of records that the factory consumes
+ *
+ * @deprecated This interface has been replaced by {@link DynamicTableSinkFactory}. The new interface
+ *             creates instances of {@link DynamicTableSink} and only works with the Blink planner.
+ *             See FLIP-95 for more information.
  */
+@Deprecated
+@PublicEvolving
 public interface BatchTableSinkFactory<T> extends TableSinkFactory<T> {
 
 	/**

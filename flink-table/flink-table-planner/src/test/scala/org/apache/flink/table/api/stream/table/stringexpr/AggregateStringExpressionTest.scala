@@ -19,11 +19,11 @@
 package org.apache.flink.table.api.stream.table.stringexpr
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.Tumble
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.functions.aggfunctions.CountAggFunction
 import org.apache.flink.table.runtime.utils.JavaUserDefinedAggFunctions.{WeightedAvg, WeightedAvgWithMergeAndReset}
 import org.apache.flink.table.utils.{CountMinMax, TableTestBase}
+
 import org.junit.Test
 
 class AggregateStringExpressionTest extends TableTestBase {
@@ -234,6 +234,31 @@ class AggregateStringExpressionTest extends TableTestBase {
       .select("b, x, y")
 
     verifyTableEquals(resScala, resJava)
+  }
+
+  @Test
+  def testAggregateWithWindow(): Unit = {
+    val util = streamTestUtil()
+    val t = util.addTable[TestPojo]('int, 'long.rowtime as 'rowtime, 'string)
+
+    val testAgg = new CountMinMax
+    util.tableEnv.registerFunction("testAgg", testAgg)
+
+    // Expression / Scala API
+    val resScala = t
+      .window(Tumble over 50.milli on 'rowtime as 'w1)
+      .groupBy('w1, 'string)
+      .aggregate(testAgg('int) as ('x, 'y, 'z))
+      .select('string, 'x, 'y, 'w1.start, 'w1.end)
+
+    // String / Java API
+    val resJava = t
+      .window(Tumble.over("50.milli").on("rowtime").as("w1"))
+      .groupBy("w1, string")
+      .aggregate("testAgg(int) as (x, y, z)")
+      .select("string, x, y, w1.start, w1.end")
+
+    verifyTableEquals(resJava, resScala)
   }
 }
 

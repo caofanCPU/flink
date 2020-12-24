@@ -19,8 +19,10 @@
 package org.apache.flink.configuration;
 
 import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.configuration.description.Description;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
+import static org.apache.flink.configuration.description.TextElement.code;
 
 /**
  * Configuration options for the BlobServer and BlobCache.
@@ -58,7 +60,12 @@ public class BlobServerOptions {
 	public static final ConfigOption<Integer> FETCH_BACKLOG =
 		key("blob.fetch.backlog")
 			.defaultValue(1000)
-			.withDescription("The config parameter defining the backlog of BLOB fetches on the JobManager.");
+			.withDescription(
+				Description
+					.builder()
+					.text("The config parameter defining the desired backlog of BLOB fetches on the JobManager." +
+						"Note that the operating system usually enforces an upper limit on the backlog size based on the %s setting.", code("SOMAXCONN"))
+					.build());
 
 	/**
 	 * The config parameter defining the server port of the blob service.
@@ -102,4 +109,20 @@ public class BlobServerOptions {
 	public static final ConfigOption<Integer> OFFLOAD_MINSIZE = key("blob.offload.minsize")
 		.defaultValue(1_024 * 1_024) // 1MiB by default
 		.withDescription("The minimum size for messages to be offloaded to the BlobServer.");
+
+	/**
+	 * The socket timeout in milliseconds for the blob client.
+	 */
+	public static final ConfigOption<Integer> SO_TIMEOUT =
+		key("blob.client.socket.timeout")
+			.defaultValue(300_000)
+			.withDescription("The socket timeout in milliseconds for the blob client.");
+
+	/**
+	 * The connection timeout in milliseconds for the blob client.
+	 */
+	public static final ConfigOption<Integer> CONNECT_TIMEOUT =
+		key("blob.client.connect.timeout")
+			.defaultValue(0)
+			.withDescription("The connection timeout in milliseconds for the blob client.");
 }

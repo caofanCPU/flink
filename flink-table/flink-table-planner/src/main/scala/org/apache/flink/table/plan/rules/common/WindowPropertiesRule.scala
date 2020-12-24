@@ -25,10 +25,10 @@ import org.apache.calcite.rex.{RexCall, RexNode}
 import org.apache.calcite.tools.RelBuilder
 import org.apache.flink.table.api.{TableException, Types, ValidationException}
 import org.apache.flink.table.calcite.FlinkRelBuilder.NamedWindowProperty
+import org.apache.flink.table.catalog.BasicOperatorTable
 import org.apache.flink.table.expressions._
 import org.apache.flink.table.plan.logical.LogicalWindow
 import org.apache.flink.table.plan.logical.rel.LogicalWindowAggregate
-import org.apache.flink.table.validate.BasicOperatorTable
 
 import scala.collection.JavaConversions._
 
@@ -90,9 +90,7 @@ abstract class WindowPropertiesBaseRule(rulePredicate: RelOptRuleOperand, ruleNa
 
     // replace window auxiliary functions in filter by access to window properties
     filter.foreach { f =>
-      builder.filter(
-        f.getChildExps.map(expr => replaceGroupAuxiliaries(expr, w, builder))
-      )
+      builder.filter(replaceGroupAuxiliaries(f.getCondition, w, builder))
     }
 
     // replace window auxiliary functions in projection by access to window properties

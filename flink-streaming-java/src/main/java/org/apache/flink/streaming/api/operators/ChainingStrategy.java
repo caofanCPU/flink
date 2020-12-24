@@ -25,7 +25,7 @@ import org.apache.flink.annotation.PublicEvolving;
  * predecessor, it means that they run in the same thread. They become one operator
  * consisting of multiple steps.
  *
- * <p>The default value used by the {@link StreamOperator} is {@link #HEAD}, which means that
+ * <p>The default value used by the StreamOperator is {@link #HEAD}, which means that
  * the operator is not chained to its predecessor. Most operators override this with
  * {@link #ALWAYS}, meaning they will be chained to predecessors whenever possible.
  */
@@ -49,5 +49,14 @@ public enum ChainingStrategy {
 	 * The operator will not be chained to the predecessor, but successors may chain to this
 	 * operator.
 	 */
-	HEAD
+	HEAD,
+
+	/**
+	 * This operator will run at the head of a chain (similar as in {@link #HEAD}, but it will additionally
+	 * try to chain source inputs if possible. This allows multi-input operators to be chained with multiple
+	 * sources into one task.
+	 */
+	HEAD_WITH_SOURCES;
+
+	public static final ChainingStrategy DEFAULT_CHAINING_STRATEGY = ALWAYS;
 }

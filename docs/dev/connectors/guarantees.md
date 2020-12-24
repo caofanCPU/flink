@@ -62,6 +62,11 @@ Please read the documentation of each connector to understand the details of the
             <td></td>
         </tr>
         <tr>
+            <td>Google PubSub</td>
+            <td>at least once</td>
+            <td></td>
+        </tr>
+        <tr>
             <td>Collections</td>
             <td>exactly once</td>
             <td></td>
@@ -93,19 +98,14 @@ state updates) of Flink coupled with bundled sinks:
   </thead>
   <tbody>
     <tr>
-        <td>HDFS rolling sink</td>
-        <td>exactly once</td>
-        <td>Implementation depends on Hadoop version</td>
-    </tr>
-    <tr>
         <td>Elasticsearch</td>
         <td>at least once</td>
         <td></td>
     </tr>
     <tr>
         <td>Kafka producer</td>
-        <td>at least once</td>
-        <td></td>
+        <td>at least once / exactly once</td>
+        <td>exactly once with transactional producers (v 0.11+)</td>
     </tr>
     <tr>
         <td>Cassandra sink</td>
@@ -119,7 +119,7 @@ state updates) of Flink coupled with bundled sinks:
     </tr>
     <tr>
         <td>File sinks</td>
-        <td>at least once</td>
+        <td>exactly once</td>
         <td></td>
     </tr>
     <tr>

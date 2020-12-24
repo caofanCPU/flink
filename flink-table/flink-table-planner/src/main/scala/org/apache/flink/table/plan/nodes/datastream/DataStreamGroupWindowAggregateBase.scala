@@ -26,15 +26,16 @@ import org.apache.flink.streaming.api.datastream.{AllWindowedStream, DataStream,
 import org.apache.flink.streaming.api.windowing.assigners._
 import org.apache.flink.streaming.api.windowing.triggers.PurgingTrigger
 import org.apache.flink.streaming.api.windowing.windows.{Window => DataStreamWindow}
-import org.apache.flink.table.api.{StreamQueryConfig, StreamTableEnvImpl, TableException}
+import org.apache.flink.table.api.{TableConfig, TableException}
 import org.apache.flink.table.calcite.FlinkRelBuilder.NamedWindowProperty
 import org.apache.flink.table.expressions.PlannerExpressionUtils._
-import org.apache.flink.table.expressions.ResolvedFieldReference
+import org.apache.flink.table.expressions.PlannerResolvedFieldReference
 import org.apache.flink.table.plan.logical._
 import org.apache.flink.table.plan.nodes.CommonAggregate
 import org.apache.flink.table.plan.nodes.datastream.DataStreamGroupWindowAggregateBase._
 import org.apache.flink.table.plan.rules.datastream.DataStreamRetractionRules
 import org.apache.flink.table.plan.schema.RowSchema
+import org.apache.flink.table.planner.StreamPlanner
 import org.apache.flink.table.runtime.aggregate.AggregateUtil._
 import org.apache.flink.table.runtime.aggregate._
 import org.apache.flink.table.runtime.triggers.StateCleaningCountTrigger
@@ -104,11 +105,11 @@ abstract class DataStreamGroupWindowAggregateBase(
           namedProperties))
   }
 
-  override def translateToPlan(
-      tableEnv: StreamTableEnvImpl,
-      queryConfig: StreamQueryConfig): DataStream[CRow] = {
+  override def translateToPlan(planner: StreamPlanner): DataStream[CRow] = {
 
-    val inputDS = input.asInstanceOf[DataStreamRel].translateToPlan(tableEnv, queryConfig)
+    val config = planner.getConfig
+
+    val inputDS = input.asInstanceOf[DataStreamRel].translateToPlan(planner)
 
     val inputIsAccRetract = DataStreamRetractionRules.isAccRetract(input)
 
@@ -125,7 +126,7 @@ abstract class DataStreamGroupWindowAggregateBase(
       case _ => false
     }
 
-    if (isCountWindow && grouping.length > 0 && queryConfig.getMinIdleStateRetentionTime < 0) {
+    if (isCountWindow && grouping.length > 0 && config.getMinIdleStateRetentionTime < 0) {
       LOG.warn(
         "No state retention interval configured for a query which accumulates state. " +
         "Please provide a query configuration with valid retention interval to prevent excessive " +
@@ -134,7 +135,7 @@ abstract class DataStreamGroupWindowAggregateBase(
 
     val timestampedInput = if (isRowtimeAttribute(window.timeAttribute)) {
       // copy the window rowtime attribute into the StreamRecord timestamp field
-      val timeAttribute = window.timeAttribute.asInstanceOf[ResolvedFieldReference].name
+      val timeAttribute = window.timeAttribute.asInstanceOf[PlannerResolvedFieldReference].name
       val timeIdx = inputSchema.fieldNames.indexOf(timeAttribute)
       if (timeIdx < 0) {
         throw new TableException("Time attribute could not be found. This is a bug.")
@@ -181,12 +182,12 @@ abstract class DataStreamGroupWindowAggregateBase(
 
       val keyedStream = timestampedInput.keyBy(keySelector)
       val windowedStream =
-        createKeyedWindowedStream(queryConfig, window, keyedStream)
+        createKeyedWindowedStream(config, window, keyedStream)
           .asInstanceOf[WindowedStream[CRow, Row, DataStreamWindow]]
 
       val (aggFunction, accumulatorRowType) =
         AggregateUtil.createDataStreamGroupWindowAggregateFunction(
-          tableEnv.getConfig,
+          planner.getConfig,
           false,
           inputSchema.typeInfo,
           None,
@@ -197,7 +198,7 @@ abstract class DataStreamGroupWindowAggregateBase(
           schema.relDataType,
           grouping,
           needMerge,
-          tableEnv.getConfig)
+          planner.getConfig)
 
       windowedStream
         .aggregate(aggFunction, windowFunction, accumulatorRowType, outRowType)
@@ -212,12 +213,12 @@ abstract class DataStreamGroupWindowAggregateBase(
         namedProperties)
 
       val windowedStream =
-        createNonKeyedWindowedStream(queryConfig, window, timestampedInput)
+        createNonKeyedWindowedStream(config, window, timestampedInput)
           .asInstanceOf[AllWindowedStream[CRow, DataStreamWindow]]
 
       val (aggFunction, accumulatorRowType) =
         AggregateUtil.createDataStreamGroupWindowAggregateFunction(
-          tableEnv.getConfig,
+          planner.getConfig,
           false,
           inputSchema.typeInfo,
           None,
@@ -228,7 +229,7 @@ abstract class DataStreamGroupWindowAggregateBase(
           schema.relDataType,
           Array[Int](),
           needMerge,
-          tableEnv.getConfig)
+          planner.getConfig)
 
       windowedStream
         .aggregate(aggFunction, windowFunction, accumulatorRowType, outRowType)
@@ -241,7 +242,7 @@ abstract class DataStreamGroupWindowAggregateBase(
 object DataStreamGroupWindowAggregateBase {
 
   private def createKeyedWindowedStream(
-    queryConfig: StreamQueryConfig,
+    config: TableConfig,
     groupWindow: LogicalWindow,
     stream: KeyedStream[CRow, Row]):
   WindowedStream[CRow, Row, _ <: DataStreamWindow] = groupWindow match {
@@ -253,7 +254,7 @@ object DataStreamGroupWindowAggregateBase {
     case TumblingGroupWindow(_, timeField, size)
       if isProctimeAttribute(timeField) && isRowCountLiteral(size)=>
       stream.countWindow(toLong(size))
-        .trigger(PurgingTrigger.of(StateCleaningCountTrigger.of(queryConfig, toLong(size))));
+        .trigger(PurgingTrigger.of(StateCleaningCountTrigger.of(config, toLong(size))));
 
     case TumblingGroupWindow(_, timeField, size)
       if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size) =>
@@ -273,7 +274,7 @@ object DataStreamGroupWindowAggregateBase {
     case SlidingGroupWindow(_, timeField, size, slide)
       if isProctimeAttribute(timeField) && isRowCountLiteral(size) =>
       stream.countWindow(toLong(size), toLong(slide))
-        .trigger(StateCleaningCountTrigger.of(queryConfig, toLong(slide)));
+        .trigger(StateCleaningCountTrigger.of(config, toLong(slide)));
 
     case SlidingGroupWindow(_, timeField, size, slide)
       if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)=>
@@ -296,7 +297,7 @@ object DataStreamGroupWindowAggregateBase {
   }
 
   private def createNonKeyedWindowedStream(
-    queryConfig: StreamQueryConfig,
+    config: TableConfig,
     groupWindow: LogicalWindow,
     stream: DataStream[CRow]):
   AllWindowedStream[CRow, _ <: DataStreamWindow] = groupWindow match {
@@ -308,7 +309,7 @@ object DataStreamGroupWindowAggregateBase {
     case TumblingGroupWindow(_, timeField, size)
       if isProctimeAttribute(timeField) && isRowCountLiteral(size)=>
       stream.countWindowAll(toLong(size))
-        .trigger(PurgingTrigger.of(StateCleaningCountTrigger.of(queryConfig, toLong(size))));
+        .trigger(PurgingTrigger.of(StateCleaningCountTrigger.of(config, toLong(size))));
 
     case TumblingGroupWindow(_, _, size) if isTimeInterval(size.resultType) =>
       stream.windowAll(TumblingEventTimeWindows.of(toTime(size)))
@@ -327,7 +328,7 @@ object DataStreamGroupWindowAggregateBase {
     case SlidingGroupWindow(_, timeField, size, slide)
       if isProctimeAttribute(timeField) && isRowCountLiteral(size)=>
       stream.countWindowAll(toLong(size), toLong(slide))
-        .trigger(StateCleaningCountTrigger.of(queryConfig, toLong(slide)));
+        .trigger(StateCleaningCountTrigger.of(config, toLong(slide)));
 
     case SlidingGroupWindow(_, timeField, size, slide)
       if isRowtimeAttribute(timeField) && isTimeIntervalLiteral(size)=>

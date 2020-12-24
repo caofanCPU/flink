@@ -20,26 +20,17 @@ package org.apache.flink.runtime.dispatcher;
 
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.time.Time;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.blob.BlobServer;
 import org.apache.flink.runtime.clusterframework.ApplicationStatus;
 import org.apache.flink.runtime.entrypoint.ClusterEntrypoint;
 import org.apache.flink.runtime.entrypoint.JobClusterEntrypoint;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionGraph;
-import org.apache.flink.runtime.heartbeat.HeartbeatServices;
-import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobmaster.JobResult;
 import org.apache.flink.runtime.messages.Acknowledge;
-import org.apache.flink.runtime.metrics.groups.JobManagerMetricGroup;
-import org.apache.flink.runtime.resourcemanager.ResourceManagerGateway;
-import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.RpcService;
-import org.apache.flink.runtime.webmonitor.retriever.GatewayRetriever;
 import org.apache.flink.util.FlinkException;
 
-import javax.annotation.Nullable;
-
+import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
@@ -55,47 +46,23 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class MiniDispatcher extends Dispatcher {
 
 	private final JobClusterEntrypoint.ExecutionMode executionMode;
-
-	private final CompletableFuture<ApplicationStatus> jobTerminationFuture;
+	private boolean jobCancelled = false;
 
 	public MiniDispatcher(
 			RpcService rpcService,
-			String endpointId,
-			Configuration configuration,
-			HighAvailabilityServices highAvailabilityServices,
-			GatewayRetriever<ResourceManagerGateway> resourceManagerGatewayRetriever,
-			BlobServer blobServer,
-			HeartbeatServices heartbeatServices,
-			JobManagerMetricGroup jobManagerMetricGroup,
-			@Nullable String metricQueryServiceAddress,
-			ArchivedExecutionGraphStore archivedExecutionGraphStore,
-			JobManagerRunnerFactory jobManagerRunnerFactory,
-			FatalErrorHandler fatalErrorHandler,
-			HistoryServerArchivist historyServerArchivist,
+			DispatcherId fencingToken,
+			DispatcherServices dispatcherServices,
 			JobGraph jobGraph,
+			DispatcherBootstrapFactory dispatcherBootstrapFactory,
 			JobClusterEntrypoint.ExecutionMode executionMode) throws Exception {
 		super(
 			rpcService,
-			endpointId,
-			configuration,
-			highAvailabilityServices,
-			new SingleJobSubmittedJobGraphStore(jobGraph),
-			resourceManagerGatewayRetriever,
-			blobServer,
-			heartbeatServices,
-			jobManagerMetricGroup,
-			metricQueryServiceAddress,
-			archivedExecutionGraphStore,
-			jobManagerRunnerFactory,
-			fatalErrorHandler,
-			historyServerArchivist);
+			fencingToken,
+			Collections.singleton(jobGraph),
+			dispatcherBootstrapFactory,
+			dispatcherServices);
 
 		this.executionMode = checkNotNull(executionMode);
-		this.jobTerminationFuture = new CompletableFuture<>();
-	}
-
-	public CompletableFuture<ApplicationStatus> getJobTerminationFuture() {
-		return jobTerminationFuture;
 	}
 
 	@Override
@@ -124,28 +91,40 @@ public class MiniDispatcher extends Dispatcher {
 				ApplicationStatus status = result.getSerializedThrowable().isPresent() ?
 						ApplicationStatus.FAILED : ApplicationStatus.SUCCEEDED;
 
-				jobTerminationFuture.complete(status);
+				log.info("Shutting down cluster because someone retrieved the job result.");
+				shutDownFuture.complete(status);
 			});
+		} else {
+			log.info("Not shutting down cluster after someone retrieved the job result.");
 		}
 
 		return jobResultFuture;
 	}
 
 	@Override
-	protected void jobReachedGloballyTerminalState(ArchivedExecutionGraph archivedExecutionGraph) {
-		super.jobReachedGloballyTerminalState(archivedExecutionGraph);
+	public CompletableFuture<Acknowledge> cancelJob(JobID jobId, Time timeout) {
+		jobCancelled = true;
+		return super.cancelJob(jobId, timeout);
+	}
 
-		if (executionMode == ClusterEntrypoint.ExecutionMode.DETACHED) {
-			// shut down since we don't have to wait for the execution result retrieval
-			jobTerminationFuture.complete(ApplicationStatus.fromJobStatus(archivedExecutionGraph.getState()));
+	@Override
+	protected CleanupJobState jobReachedGloballyTerminalState(ArchivedExecutionGraph archivedExecutionGraph) {
+		final CleanupJobState cleanupHAState = super.jobReachedGloballyTerminalState(archivedExecutionGraph);
+
+		if (jobCancelled || executionMode == ClusterEntrypoint.ExecutionMode.DETACHED) {
+			// shut down if job is cancelled or we don't have to wait for the execution result retrieval
+			log.info("Shutting down cluster with state {}, jobCancelled: {}, executionMode: {}", archivedExecutionGraph.getState(), jobCancelled, executionMode);
+			shutDownFuture.complete(ApplicationStatus.fromJobStatus(archivedExecutionGraph.getState()));
 		}
+
+		return cleanupHAState;
 	}
 
 	@Override
 	protected void jobNotFinished(JobID jobId) {
 		super.jobNotFinished(jobId);
-
 		// shut down since we have done our job
-		jobTerminationFuture.complete(ApplicationStatus.UNKNOWN);
+		log.info("Shutting down cluster because job not finished");
+		shutDownFuture.complete(ApplicationStatus.UNKNOWN);
 	}
 }

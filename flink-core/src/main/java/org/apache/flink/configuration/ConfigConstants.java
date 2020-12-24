@@ -53,23 +53,30 @@ public final class ConfigConstants {
 	/**
 	 * Defines the restart strategy to be used. It can be "off", "none", "disable" to be disabled or
 	 * it can be "fixeddelay", "fixed-delay" to use the FixedDelayRestartStrategy or it can
-	 * be "failurerate", "failure-rate" to use FailureRateRestartStrategy. You can also
-	 * specify a class name which implements the RestartStrategy interface and has a static
-	 * create method which takes a Configuration object.
+	 * be "failurerate", "failure-rate" to use FailureRateRestartStrategy.
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY} instead.
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final String RESTART_STRATEGY = "restart-strategy";
 
 	/**
 	 * Maximum number of attempts the fixed delay restart strategy will try before failing a job.
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS} instead.
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final String RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS = "restart-strategy.fixed-delay.attempts";
 
 	/**
 	 * Delay between two consecutive restart attempts in FixedDelayRestartStrategy. It can be specified using Scala's
 	 * FiniteDuration notation: "1 min", "20 s"
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY_FIXED_DELAY_DELAY} instead.
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final ConfigOption<String> RESTART_STRATEGY_FIXED_DELAY_DELAY =
 		key("restart-strategy.fixed-delay.delay").defaultValue("0 s");
@@ -77,21 +84,30 @@ public final class ConfigConstants {
 	/**
 	 * Maximum number of restarts in given time interval {@link #RESTART_STRATEGY_FAILURE_RATE_FAILURE_RATE_INTERVAL} before failing a job
 	 * in FailureRateRestartStrategy.
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY_FAILURE_RATE_MAX_FAILURES_PER_INTERVAL} instead.
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final String RESTART_STRATEGY_FAILURE_RATE_MAX_FAILURES_PER_INTERVAL = "restart-strategy.failure-rate.max-failures-per-interval";
 
 	/**
 	 * Time interval in which greater amount of failures than {@link #RESTART_STRATEGY_FAILURE_RATE_MAX_FAILURES_PER_INTERVAL} causes
 	 * job fail in FailureRateRestartStrategy. It can be specified using Scala's FiniteDuration notation: "1 min", "20 s"
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY_FAILURE_RATE_FAILURE_RATE_INTERVAL}
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final String RESTART_STRATEGY_FAILURE_RATE_FAILURE_RATE_INTERVAL = "restart-strategy.failure-rate.failure-rate-interval";
 
 	/**
 	 * Delay between two consecutive restart attempts in FailureRateRestartStrategy.
 	 * It can be specified using Scala's FiniteDuration notation: "1 min", "20 s".
+	 *
+	 * @deprecated use {@link RestartStrategyOptions#RESTART_STRATEGY_FAILURE_RATE_DELAY} instead.
 	 */
+	@Deprecated
 	@PublicEvolving
 	public static final String RESTART_STRATEGY_FAILURE_RATE_DELAY = "restart-strategy.failure-rate.delay";
 
@@ -204,7 +220,7 @@ public final class ConfigConstants {
 	public static final String TASK_MANAGER_IPC_PORT_KEY = "taskmanager.rpc.port";
 
 	/**
-	 * @deprecated use {@link TaskManagerOptions#DATA_PORT} instead
+	 * @deprecated use {@link NettyShuffleEnvironmentOptions#DATA_PORT} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_DATA_PORT_KEY = "taskmanager.data.port";
@@ -212,7 +228,7 @@ public final class ConfigConstants {
 	/**
 	 * Config parameter to override SSL support for taskmanager's data transport.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#DATA_SSL_ENABLED} instead
+	 * @deprecated use {@link NettyShuffleEnvironmentOptions#DATA_SSL_ENABLED} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_DATA_SSL_ENABLED = "taskmanager.data.ssl.enabled";
@@ -231,38 +247,19 @@ public final class ConfigConstants {
 	 */
 	public static final String TASK_MANAGER_LOG_PATH_KEY = "taskmanager.log.path";
 
-	/**
-	 * The config parameter defining the amount of memory to be allocated by the task manager's
-	 * memory manager (in megabytes). If not set, a relative fraction will be allocated, as defined
-	 * by {@link #TASK_MANAGER_MEMORY_FRACTION_KEY}.
-	 *
-	 * @deprecated Use {@link TaskManagerOptions#MANAGED_MEMORY_SIZE} instead
-	 */
+	/** @deprecated Use {@link TaskManagerOptions#MANAGED_MEMORY_SIZE} instead */
 	@Deprecated
 	public static final String TASK_MANAGER_MEMORY_SIZE_KEY = "taskmanager.memory.size";
 
-	/**
-	 * The config parameter defining the fraction of free memory allocated by the memory manager.
-	 *
-	 * @deprecated Use {@link TaskManagerOptions#MANAGED_MEMORY_FRACTION} instead
-	 */
+	/** @deprecated has no effect */
 	@Deprecated
 	public static final String TASK_MANAGER_MEMORY_FRACTION_KEY = "taskmanager.memory.fraction";
 
-	/**
-	 * The config parameter defining the memory allocation method (JVM heap or off-heap).
-	 *
-	 * @deprecated Use {@link TaskManagerOptions#MEMORY_OFF_HEAP} instead
-	 */
+	/** @deprecated has no effect */
 	@Deprecated
 	public static final String TASK_MANAGER_MEMORY_OFF_HEAP_KEY = "taskmanager.memory.off-heap";
 
-	/**
-	 * The config parameter for specifying whether TaskManager managed memory should be preallocated
-	 * when the TaskManager is starting. (default is false)
-	 *
-	 * @deprecated Use {@link TaskManagerOptions#MANAGED_MEMORY_PRE_ALLOCATE} instead
-	 */
+	/** @deprecated has no effect */
 	@Deprecated
 	public static final String TASK_MANAGER_MEMORY_PRE_ALLOCATE_KEY = "taskmanager.memory.preallocate";
 
@@ -270,7 +267,7 @@ public final class ConfigConstants {
 	 * The config parameter defining the number of buffers used in the network stack. This defines the
 	 * number of possible tasks and shuffles.
 	 *
-	 * @deprecated Use {@link TaskManagerOptions#NETWORK_NUM_BUFFERS} instead
+	 * @deprecated Use {@link NettyShuffleEnvironmentOptions#NETWORK_NUM_BUFFERS} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_NETWORK_NUM_BUFFERS_KEY = "taskmanager.network.numberOfBuffers";
@@ -326,7 +323,7 @@ public final class ConfigConstants {
 	 * The initial registration pause between two consecutive registration attempts. The pause
 	 * is doubled for each new registration attempt until it reaches the maximum registration pause.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#INITIAL_REGISTRATION_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#INITIAL_REGISTRATION_TIMEOUT} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_INITIAL_REGISTRATION_PAUSE = "taskmanager.initial-registration-pause";
@@ -334,7 +331,7 @@ public final class ConfigConstants {
 	/**
 	 * The maximum registration pause between two consecutive registration attempts.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#REGISTRATION_MAX_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#MAX_REGISTRATION_TIMEOUT} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_MAX_REGISTARTION_PAUSE = "taskmanager.max-registration-pause";
@@ -342,10 +339,14 @@ public final class ConfigConstants {
 	/**
 	 * The pause after a registration has been refused by the job manager before retrying to connect.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#REFUSED_REGISTRATION_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#REFUSED_REGISTRATION_DELAY} instead
 	 */
 	@Deprecated
 	public static final String TASK_MANAGER_REFUSED_REGISTRATION_PAUSE = "taskmanager.refused-registration-pause";
+
+	/** @deprecated has no effect */
+	@Deprecated
+	public static final boolean DEFAULT_TASK_MANAGER_MEMORY_PRE_ALLOCATE = false;
 
 	/**
 	 * @deprecated Deprecated. Please use {@link TaskManagerOptions#TASK_CANCELLATION_INTERVAL}.
@@ -382,23 +383,25 @@ public final class ConfigConstants {
 
 	/**
 	 * Whether to use the LargeRecordHandler when spilling.
+	 * @deprecated use {@link AlgorithmOptions#USE_LARGE_RECORDS_HANDLER}
 	 */
+	@Deprecated
 	public static final String USE_LARGE_RECORD_HANDLER_KEY = "taskmanager.runtime.large-record-handler";
 
 
 	// -------- Common Resource Framework Configuration (YARN & Mesos) --------
 
 	/**
-	 * Percentage of heap space to remove from containers (YARN / Mesos), to compensate
+	 * Percentage of heap space to remove from containers (YARN / Mesos / Kubernetes), to compensate
 	 * for other JVM memory usage.
-	 * @deprecated Use {@link ResourceManagerOptions#CONTAINERIZED_HEAP_CUTOFF_RATIO} instead.
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final String CONTAINERIZED_HEAP_CUTOFF_RATIO = "containerized.heap-cutoff-ratio";
 
 	/**
 	 * Minimum amount of heap memory to remove in containers, as a safety margin.
-	 * @deprecated Use {@link ResourceManagerOptions#CONTAINERIZED_HEAP_CUTOFF_MIN} instead.
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final String CONTAINERIZED_HEAP_CUTOFF_MIN = "containerized.heap-cutoff-min";
@@ -433,14 +436,14 @@ public final class ConfigConstants {
 
 	/**
 	 * Percentage of heap space to remove from containers started by YARN.
-	 * @deprecated in favor of {@code #CONTAINERIZED_HEAP_CUTOFF_RATIO}
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final String YARN_HEAP_CUTOFF_RATIO = "yarn.heap-cutoff-ratio";
 
 	/**
 	 * Minimum amount of memory to remove from the heap space as a safety margin.
-	 * @deprecated in favor of {@code #CONTAINERIZED_HEAP_CUTOFF_MIN}
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final String YARN_HEAP_CUTOFF_MIN = "yarn.heap-cutoff-min";
@@ -806,7 +809,7 @@ public final class ConfigConstants {
 	public static final String JOB_MANAGER_WEB_BACK_PRESSURE_REFRESH_INTERVAL = "jobmanager.web.backpressure.refresh-interval";
 
 	/**
-	 * Number of stack trace samples to take to determine back pressure.
+	 * Number of samples to take to determine back pressure.
 	 *
 	 * @deprecated Use {@link WebOptions#BACKPRESSURE_NUM_SAMPLES} instead.
 	 */
@@ -814,7 +817,7 @@ public final class ConfigConstants {
 	public static final String JOB_MANAGER_WEB_BACK_PRESSURE_NUM_SAMPLES = "jobmanager.web.backpressure.num-samples";
 
 	/**
-	 * Delay between stack trace samples to determine back pressure.
+	 * Delay between samples to determine back pressure.
 	 *
 	 * @deprecated Use {@link WebOptions#BACKPRESSURE_DELAY} instead.
 	 */
@@ -858,7 +861,7 @@ public final class ConfigConstants {
 	/**
 	 * Heartbeat interval of watch failure detector.
 	 *
-	 * @deprecated Use {@link AkkaOptions#WATCH_HEARTBEAT_INTERVAL} instead.
+	 * @deprecated This option is no longer used and has no effect on Flink.
 	 */
 	@Deprecated
 	public static final String AKKA_WATCH_HEARTBEAT_INTERVAL = "akka.watch.heartbeat.interval";
@@ -866,7 +869,7 @@ public final class ConfigConstants {
 	/**
 	 * Allowed heartbeat pause for the watch failure detector.
 	 *
-	 * @deprecated Use {@link AkkaOptions#WATCH_HEARTBEAT_PAUSE} instead.
+	 * @deprecated This option is no longer used and has no effect on Flink.
 	 */
 	@Deprecated
 	public static final String AKKA_WATCH_HEARTBEAT_PAUSE = "akka.watch.heartbeat.pause";
@@ -874,7 +877,7 @@ public final class ConfigConstants {
 	/**
 	 * Detection threshold for the phi accrual watch failure detector.
 	 *
-	 * @deprecated Use {@link AkkaOptions#WATCH_THRESHOLD} instead.
+	 * @deprecated This option is no longer used and has no effect on Flink.
 	 */
 	@Deprecated
 	public static final String AKKA_WATCH_THRESHOLD = "akka.watch.threshold";
@@ -938,7 +941,7 @@ public final class ConfigConstants {
 	/**
 	 * Timeout for all blocking calls on the client side.
 	 *
-	 * @deprecated Use {@link AkkaOptions#CLIENT_TIMEOUT} instead.
+	 * @deprecated Use {@code ClientOptions#CLIENT_TIMEOUT} instead.
 	 */
 	@Deprecated
 	public static final String AKKA_CLIENT_TIMEOUT = "akka.client.timeout";
@@ -1044,11 +1047,6 @@ public final class ConfigConstants {
 	@PublicEvolving
 	public static final String HA_JOB_MANAGER_PORT = "high-availability.jobmanager.port";
 
-	/** @deprecated Deprecated in favour of {@link HighAvailabilityOptions#HA_JOB_DELAY}. */
-	@PublicEvolving
-	@Deprecated
-	public static final String HA_JOB_DELAY = "high-availability.job.delay";
-
 	/** @deprecated Deprecated in favour of {@link #HA_MODE}. */
 	@Deprecated
 	public static final String RECOVERY_MODE = "recovery.mode";
@@ -1057,7 +1055,7 @@ public final class ConfigConstants {
 	@Deprecated
 	public static final String RECOVERY_JOB_MANAGER_PORT = "recovery.jobmanager.port";
 
-	/** @deprecated Deprecated in favour of {@link #HA_JOB_DELAY}. */
+	/** @deprecated This option is no longer used and has no effect on Flink. */
 	@Deprecated
 	public static final String RECOVERY_JOB_DELAY = "recovery.job.delay";
 
@@ -1250,6 +1248,9 @@ public final class ConfigConstants {
 	/**	The delimiter used to assemble the metric identifier. This is used as a suffix in an actual reporter config. */
 	public static final String METRICS_REPORTER_SCOPE_DELIMITER = "scope.delimiter";
 
+	/** The set of variables that should be excluded. */
+	public static final String METRICS_REPORTER_EXCLUDED_VARIABLES = "scope.variables.excludes";
+
 	/** @deprecated Use {@link MetricOptions#SCOPE_DELIMITER} instead. */
 	@Deprecated
 	public static final String METRICS_SCOPE_DELIMITER = "metrics.scope.delimiter";
@@ -1392,7 +1393,7 @@ public final class ConfigConstants {
 	 * The default network port the task manager expects to receive transfer envelopes on. The {@code 0} means that
 	 * the TaskManager searches for a free port.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#DATA_PORT} instead
+	 * @deprecated use {@link NettyShuffleEnvironmentOptions#DATA_PORT} instead
 	 */
 	@Deprecated
 	public static final int DEFAULT_TASK_MANAGER_DATA_PORT = 0;
@@ -1400,7 +1401,7 @@ public final class ConfigConstants {
 	/**
 	 * The default value to override ssl support for task manager's data transport.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#DATA_SSL_ENABLED} instead
+	 * @deprecated use {@link NettyShuffleEnvironmentOptions#DATA_SSL_ENABLED} instead
 	 */
 	@Deprecated
 	public static final boolean DEFAULT_TASK_MANAGER_DATA_SSL_ENABLED = true;
@@ -1413,18 +1414,14 @@ public final class ConfigConstants {
 	@Deprecated
 	public static final String DEFAULT_TASK_MANAGER_TMP_PATH = System.getProperty("java.io.tmpdir");
 
-	/**
-	 * Config key has been deprecated. Therefore, no default value required.
-	 *
-	 * @deprecated {@link TaskManagerOptions#MANAGED_MEMORY_FRACTION} provides the default value now
-	 */
+	/** @deprecated has no effect */
 	@Deprecated
 	public static final float DEFAULT_MEMORY_MANAGER_MEMORY_FRACTION = 0.7f;
 
 	/**
 	 * Config key has been deprecated. Therefore, no default value required.
 	 *
-	 * @deprecated {@link TaskManagerOptions#NETWORK_NUM_BUFFERS} provides the default value now
+	 * @deprecated {@link NettyShuffleEnvironmentOptions#NETWORK_NUM_BUFFERS} provides the default value now
 	 */
 	@Deprecated
 	public static final int DEFAULT_TASK_MANAGER_NETWORK_NUM_BUFFERS = 2048;
@@ -1470,7 +1467,7 @@ public final class ConfigConstants {
 	/**
 	 * The default task manager's initial registration pause.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#INITIAL_REGISTRATION_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#INITIAL_REGISTRATION_TIMEOUT} instead
 	 */
 	@Deprecated
 	public static final String DEFAULT_TASK_MANAGER_INITIAL_REGISTRATION_PAUSE = "500 ms";
@@ -1478,7 +1475,7 @@ public final class ConfigConstants {
 	/**
 	 * The default task manager's maximum registration pause.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#REGISTRATION_MAX_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#MAX_REGISTRATION_TIMEOUT} instead
 	 */
 	@Deprecated
 	public static final String DEFAULT_TASK_MANAGER_MAX_REGISTRATION_PAUSE = "30 s";
@@ -1486,18 +1483,10 @@ public final class ConfigConstants {
 	/**
 	 * The default task manager's refused registration pause.
 	 *
-	 * @deprecated use {@link TaskManagerOptions#REFUSED_REGISTRATION_BACKOFF} instead
+	 * @deprecated use {@link ClusterOptions#REFUSED_REGISTRATION_DELAY} instead
 	 */
 	@Deprecated
 	public static final String DEFAULT_TASK_MANAGER_REFUSED_REGISTRATION_PAUSE = "10 s";
-
-	/**
-	 * Config key has been deprecated. Therefore, no default value required.
-	 *
-	 * @deprecated {@link TaskManagerOptions#MANAGED_MEMORY_PRE_ALLOCATE} provides the default value now
-	 */
-	@Deprecated
-	public static final boolean DEFAULT_TASK_MANAGER_MEMORY_PRE_ALLOCATE = false;
 
 	/** @deprecated Please use {@link TaskManagerOptions#TASK_CANCELLATION_INTERVAL}. */
 	@Deprecated
@@ -1530,7 +1519,10 @@ public final class ConfigConstants {
 
 	/**
 	 * Whether to use the LargeRecordHandler when spilling.
+	 *
+	 * @deprecated use {@link AlgorithmOptions#USE_LARGE_RECORDS_HANDLER} instead
 	 */
+	@Deprecated
 	public static final boolean DEFAULT_USE_LARGE_RECORD_HANDLER = false;
 
 
@@ -1539,7 +1531,7 @@ public final class ConfigConstants {
 	/**
 	 * Minimum amount of memory to subtract from the process memory to get the TaskManager
 	 * heap size. We came up with these values experimentally.
-	 * @deprecated Use {@link ResourceManagerOptions#CONTAINERIZED_HEAP_CUTOFF_MIN} instead.
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final int DEFAULT_YARN_HEAP_CUTOFF = 600;
@@ -1547,7 +1539,7 @@ public final class ConfigConstants {
 	/**
 	 * Relative amount of memory to subtract from Java process memory to get the TaskManager
 	 * heap size.
-	 * @deprecated Use {@link ResourceManagerOptions#CONTAINERIZED_HEAP_CUTOFF_RATIO} instead.
+	 * @deprecated Not used anymore, but remain here until Flink 2.0
 	 */
 	@Deprecated
 	public static final float DEFAULT_YARN_HEAP_CUTOFF_RATIO = 0.25f;
@@ -1764,7 +1756,7 @@ public final class ConfigConstants {
 	public static final double DEFAULT_AKKA_TRANSPORT_THRESHOLD = 300.0;
 
 	/**
-	 * @deprecated Use {@link AkkaOptions#WATCH_THRESHOLD} instead.
+	 * @deprecated This default value is no longer used and has no effect on Flink.
 	 */
 	@Deprecated
 	public static final double DEFAULT_AKKA_WATCH_THRESHOLD = 12;
@@ -1800,7 +1792,7 @@ public final class ConfigConstants {
 	public static final String DEFAULT_AKKA_LOOKUP_TIMEOUT = "10 s";
 
 	/**
-	 * @deprecated Use {@link AkkaOptions#CLIENT_TIMEOUT} instead.
+	 * @deprecated Use {@code ClientOptions#CLIENT_TIMEOUT} instead.
 	 */
 	@Deprecated
 	public static final String DEFAULT_AKKA_CLIENT_TIMEOUT = "60 s";
@@ -1866,6 +1858,10 @@ public final class ConfigConstants {
 	@Deprecated
 	public static final int DEFAULT_LOCAL_NUMBER_RESOURCE_MANAGER = 1;
 
+	/**
+	 * @deprecated Has no effect; the web-server is always started. Will be removed in 2.0.
+	 */
+	@Deprecated
 	public static final String LOCAL_START_WEBSERVER = "local.start-webserver";
 
 	// --------------------------- High Availability ---------------------------------
@@ -2008,11 +2004,23 @@ public final class ConfigConstants {
 	/** The environment variable name which contains the location of the lib folder. */
 	public static final String ENV_FLINK_LIB_DIR = "FLINK_LIB_DIR";
 
+	/** The environment variable name which contains the location of the opt directory. */
+	public static final String ENV_FLINK_OPT_DIR = "FLINK_OPT_DIR";
+
+	/** The environment variable name which contains the location of the plugins folder. */
+	public static final String ENV_FLINK_PLUGINS_DIR = "FLINK_PLUGINS_DIR";
+
+	/** The default Flink plugins directory if none has been specified via {@link #ENV_FLINK_PLUGINS_DIR}. */
+	public static final String DEFAULT_FLINK_PLUGINS_DIRS = "plugins";
+
 	/** The environment variable name which contains the location of the bin directory. */
 	public static final String ENV_FLINK_BIN_DIR = "FLINK_BIN_DIR";
 
 	/** The environment variable name which contains the Flink installation root directory. */
 	public static final String ENV_FLINK_HOME_DIR = "FLINK_HOME";
+
+	/** The user lib directory name. */
+	public static final String DEFAULT_FLINK_USR_LIB_DIR = "usrlib";
 
 	// ---------------------------- Encoding ------------------------------
 

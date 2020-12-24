@@ -20,12 +20,13 @@ package org.apache.flink.table.api.stream.table
 
 import org.apache.flink.api.java.typeutils.RowTypeInfo
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.Types
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api.Expressions.$
+import org.apache.flink.table.api.{Types, _}
 import org.apache.flink.table.expressions.utils.Func0
-import org.apache.flink.table.utils.{EmptyTableAggFunc, TableTestBase}
 import org.apache.flink.table.utils.TableTestUtil._
+import org.apache.flink.table.utils.{EmptyTableAggFunc, EmptyTableAggFuncWithIntResultType, TableTestBase}
 import org.apache.flink.types.Row
+
 import org.junit.Test
 
 class TableAggregateTest extends TableTestBase {
@@ -49,7 +50,7 @@ class TableAggregateTest extends TableTestBase {
           "DataStreamGroupTableAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
+            streamTableNode(table),
             term("select", "a", "b", "MOD(b, 5) AS bb")
           ),
           term("groupBy", "bb"),
@@ -74,7 +75,7 @@ class TableAggregateTest extends TableTestBase {
           "DataStreamGroupTableAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
+            streamTableNode(table),
             term("select", "a", "b")
           ),
           term("select", "EmptyTableAggFunc(a, b) AS (f0, f1)")
@@ -96,7 +97,7 @@ class TableAggregateTest extends TableTestBase {
         "DataStreamGroupTableAggregate",
         unaryNode(
           "DataStreamCalc",
-          streamTableNode(0),
+          streamTableNode(table),
           term("select", "CAST(d) AS d", "PROCTIME(e) AS e")
         ),
         term("select", "EmptyTableAggFunc(d, e) AS (f0, f1)")
@@ -109,14 +110,14 @@ class TableAggregateTest extends TableTestBase {
 
     val resultTable = table
       .flatAggregate(emptyFunc('b))
-      .select("*")
+      .select($"*")
 
     val expected =
       unaryNode(
         "DataStreamGroupTableAggregate",
         unaryNode(
           "DataStreamCalc",
-          streamTableNode(0),
+          streamTableNode(table),
           term("select", "b")
         ),
         term("select", "EmptyTableAggFunc(b) AS (f0, f1)")
@@ -138,7 +139,7 @@ class TableAggregateTest extends TableTestBase {
           "DataStreamGroupTableAggregate",
           unaryNode(
             "DataStreamCalc",
-            streamTableNode(0),
+            streamTableNode(table),
             term("select", "b")
           ),
           term("select", "EmptyTableAggFunc(b) AS (f0, f1)")
@@ -152,28 +153,53 @@ class TableAggregateTest extends TableTestBase {
   def testJavaRegisterFunction(): Unit = {
     val util = streamTestUtil()
     val typeInfo = new RowTypeInfo(Types.INT, Types.LONG, Types.STRING)
-    val table = util.addJavaTable[Row](typeInfo, "sourceTable", "a, b, c")
+    val table = util.addJavaTable[Row](typeInfo, "sourceTable", $("a"), $("b"), $("c"))
 
     val func = new EmptyTableAggFunc
     util.javaTableEnv.registerFunction("func", func)
 
     val resultTable = table
-      .groupBy("c")
+      .groupBy($"c")
       .flatAggregate("func(a)")
-      .select("*")
+      .select($"*")
 
     val expected =
       unaryNode(
         "DataStreamGroupTableAggregate",
         unaryNode(
           "DataStreamCalc",
-          streamTableNode(0),
+          streamTableNode(table),
           term("select", "a", "c")
         ),
         term("groupBy", "c"),
         term("select", "c", "EmptyTableAggFunc(a) AS (f0, f1)")
       )
     util.verifyJavaTable(resultTable, expected)
+  }
+
+  @Test
+  def testTableAggregateWithIntResultType(): Unit = {
+
+    val table = util.addTable[(Long, Int, Long, Long)]('f0, 'f1, 'f2, 'd.rowtime, 'e.proctime)
+    val func = new EmptyTableAggFuncWithIntResultType
+
+    val resultTable = table
+      .groupBy('f0)
+      .flatAggregate(func('f1))
+      .select('f0, 'f0_0)
+
+    val expected =
+      unaryNode(
+        "DataStreamGroupTableAggregate",
+        unaryNode(
+          "DataStreamCalc",
+          streamTableNode(table),
+          term("select", "f0", "f1")
+        ),
+        term("groupBy", "f0"),
+        term("select", "f0, EmptyTableAggFuncWithIntResultType(f1) AS (f0_0)")
+      )
+    util.verifyTable(resultTable, expected)
   }
 }
 

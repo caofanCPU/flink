@@ -19,9 +19,10 @@
 package org.apache.flink.table.plan
 
 import org.apache.flink.api.scala._
-import org.apache.flink.table.api.scala._
+import org.apache.flink.table.api._
 import org.apache.flink.table.utils.TableTestBase
 import org.apache.flink.table.utils.TableTestUtil._
+
 import org.junit.Test
 
 class QueryDecorrelationTest extends TableTestBase {
@@ -29,8 +30,14 @@ class QueryDecorrelationTest extends TableTestBase {
   @Test
   def testCorrelationScalarAggAndFilter(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, String, String, Int, Int)]("emp", 'empno, 'ename, 'job, 'salary, 'deptno)
-    util.addTable[(Int, String)]("dept", 'deptno, 'name)
+    val table = util.addTable[(Int, String, String, Int, Int)](
+      "emp",
+      'empno,
+      'ename,
+      'job,
+      'salary,
+      'deptno)
+    val table1 = util.addTable[(Int, String)]("dept", 'deptno, 'name)
 
     val sql = "SELECT e1.empno\n" +
         "FROM emp e1, dept d1 where e1.deptno = d1.deptno\n" +
@@ -47,13 +54,13 @@ class QueryDecorrelationTest extends TableTestBase {
             "DataSetJoin",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "empno", "salary", "deptno"),
               term("where", "<(deptno, 10)")
             ),
             unaryNode(
               "DataSetCalc",
-              batchTableNode(1),
+              batchTableNode(table1),
               term("select", "deptno"),
               term("where", "<(deptno, 15)")
             ),
@@ -67,7 +74,7 @@ class QueryDecorrelationTest extends TableTestBase {
           "DataSetAggregate",
           unaryNode(
             "DataSetCalc",
-            batchTableNode(0),
+            batchTableNode(table),
             term("select", "empno", "salary"),
             term("where", "IS NOT NULL(empno)")
           ),
@@ -87,8 +94,14 @@ class QueryDecorrelationTest extends TableTestBase {
   @Test
   def testDecorrelateWithMultiAggregate(): Unit = {
     val util = batchTestUtil()
-    util.addTable[(Int, String, String, Int, Int)]("emp", 'empno, 'ename, 'job, 'salary, 'deptno)
-    util.addTable[(Int, String)]("dept", 'deptno, 'name)
+    val table = util.addTable[(Int, String, String, Int, Int)](
+      "emp",
+      'empno,
+      'ename,
+      'job,
+      'salary,
+      'deptno)
+    val table1 = util.addTable[(Int, String)]("dept", 'deptno, 'name)
 
     val sql = "select sum(e1.empno) from emp e1, dept d1 " +
         "where e1.deptno = d1.deptno " +
@@ -108,12 +121,12 @@ class QueryDecorrelationTest extends TableTestBase {
               "DataSetJoin",
               unaryNode(
                 "DataSetCalc",
-                batchTableNode(0),
+                batchTableNode(table),
                 term("select", "empno", "salary", "deptno")
               ),
               unaryNode(
                 "DataSetCalc",
-                batchTableNode(1),
+                batchTableNode(table1),
                 term("select", "deptno")
               ),
               term("where", "=(deptno, deptno0)"),
@@ -126,7 +139,7 @@ class QueryDecorrelationTest extends TableTestBase {
             "DataSetAggregate",
             unaryNode(
               "DataSetCalc",
-              batchTableNode(0),
+              batchTableNode(table),
               term("select", "deptno", "salary"),
               term("where", "IS NOT NULL(deptno)")
             ),

@@ -20,27 +20,21 @@ package org.apache.flink.mesos.entrypoint;
 
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.JobManagerOptions;
+import org.apache.flink.core.plugin.PluginManager;
 import org.apache.flink.mesos.runtime.clusterframework.MesosResourceManagerFactory;
-import org.apache.flink.mesos.runtime.clusterframework.MesosTaskManagerParameters;
 import org.apache.flink.mesos.runtime.clusterframework.services.MesosServices;
 import org.apache.flink.mesos.runtime.clusterframework.services.MesosServicesUtils;
 import org.apache.flink.mesos.util.MesosConfiguration;
-import org.apache.flink.runtime.clusterframework.BootstrapTools;
-import org.apache.flink.runtime.clusterframework.ContainerSpecification;
+import org.apache.flink.mesos.util.MesosUtils;
 import org.apache.flink.runtime.concurrent.FutureUtils;
 import org.apache.flink.runtime.entrypoint.ClusterEntrypoint;
+import org.apache.flink.runtime.entrypoint.ClusterEntrypointUtils;
+import org.apache.flink.runtime.entrypoint.DynamicParametersConfigurationParserFactory;
 import org.apache.flink.runtime.entrypoint.SessionClusterEntrypoint;
-import org.apache.flink.runtime.entrypoint.component.DispatcherResourceManagerComponentFactory;
-import org.apache.flink.runtime.entrypoint.component.SessionDispatcherResourceManagerComponentFactory;
+import org.apache.flink.runtime.entrypoint.component.DefaultDispatcherResourceManagerComponentFactory;
 import org.apache.flink.runtime.util.EnvironmentInformation;
 import org.apache.flink.runtime.util.JvmShutdownSafeguard;
 import org.apache.flink.runtime.util.SignalHandler;
-import org.apache.flink.util.Preconditions;
-
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.PosixParser;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -49,49 +43,25 @@ import java.util.concurrent.CompletableFuture;
  */
 public class MesosSessionClusterEntrypoint extends SessionClusterEntrypoint {
 
-	// ------------------------------------------------------------------------
-	//  Command-line options
-	// ------------------------------------------------------------------------
-
-	private static final Options ALL_OPTIONS;
-
-	static {
-		ALL_OPTIONS =
-			new Options()
-				.addOption(BootstrapTools.newDynamicPropertiesOption());
-	}
-
-	private final Configuration dynamicProperties;
-
 	private MesosConfiguration mesosConfig;
 
 	private MesosServices mesosServices;
 
-	private MesosTaskManagerParameters taskManagerParameters;
-
-	private ContainerSpecification taskManagerContainerSpec;
-
-	public MesosSessionClusterEntrypoint(Configuration config, Configuration dynamicProperties) {
+	public MesosSessionClusterEntrypoint(Configuration config) {
 		super(config);
-
-		this.dynamicProperties = Preconditions.checkNotNull(dynamicProperties);
 	}
 
 	@Override
-	protected void initializeServices(Configuration config) throws Exception {
-		super.initializeServices(config);
+	protected void initializeServices(Configuration config, PluginManager pluginManager) throws Exception {
+		super.initializeServices(config, pluginManager);
 
 		final String hostname = config.getString(JobManagerOptions.ADDRESS);
 
 		// Mesos configuration
-		mesosConfig = MesosEntrypointUtils.createMesosSchedulerConfiguration(config, hostname);
+		mesosConfig = MesosUtils.createMesosSchedulerConfiguration(config, hostname);
 
 		// services
 		mesosServices = MesosServicesUtils.createMesosServices(config, hostname);
-
-		// TM configuration
-		taskManagerParameters = MesosEntrypointUtils.createTmParameters(config, LOG);
-		taskManagerContainerSpec = MesosEntrypointUtils.createContainerSpec(config, dynamicProperties);
 	}
 
 	@Override
@@ -108,13 +78,11 @@ public class MesosSessionClusterEntrypoint extends SessionClusterEntrypoint {
 	}
 
 	@Override
-	protected DispatcherResourceManagerComponentFactory<?> createDispatcherResourceManagerComponentFactory(Configuration configuration) {
-		return new SessionDispatcherResourceManagerComponentFactory(
+	protected DefaultDispatcherResourceManagerComponentFactory createDispatcherResourceManagerComponentFactory(Configuration configuration) {
+		return DefaultDispatcherResourceManagerComponentFactory.createSessionComponentFactory(
 			new MesosResourceManagerFactory(
 				mesosServices,
-				mesosConfig,
-				taskManagerParameters,
-				taskManagerContainerSpec));
+				mesosConfig));
 	}
 
 	public static void main(String[] args) {
@@ -124,21 +92,13 @@ public class MesosSessionClusterEntrypoint extends SessionClusterEntrypoint {
 		JvmShutdownSafeguard.installAsShutdownHook(LOG);
 
 		// load configuration incl. dynamic properties
-		CommandLineParser parser = new PosixParser();
-		CommandLine cmd;
-		try {
-			cmd = parser.parse(ALL_OPTIONS, args);
-		}
-		catch (Exception e){
-			LOG.error("Could not parse the command-line options.", e);
-			System.exit(STARTUP_FAILURE_RETURN_CODE);
-			return;
-		}
+		Configuration dynamicProperties = ClusterEntrypointUtils.parseParametersOrExit(
+			args,
+			new DynamicParametersConfigurationParserFactory(),
+			MesosSessionClusterEntrypoint.class);
+		Configuration configuration = MesosUtils.loadConfiguration(dynamicProperties, LOG);
 
-		Configuration dynamicProperties = BootstrapTools.parseDynamicProperties(cmd);
-		Configuration configuration = MesosEntrypointUtils.loadConfiguration(dynamicProperties, LOG);
-
-		MesosSessionClusterEntrypoint clusterEntrypoint = new MesosSessionClusterEntrypoint(configuration, dynamicProperties);
+		MesosSessionClusterEntrypoint clusterEntrypoint = new MesosSessionClusterEntrypoint(configuration);
 
 		ClusterEntrypoint.runClusterEntrypoint(clusterEntrypoint);
 	}

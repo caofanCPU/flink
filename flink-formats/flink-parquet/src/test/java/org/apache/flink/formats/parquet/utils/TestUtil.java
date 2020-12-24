@@ -19,6 +19,10 @@
 package org.apache.flink.formats.parquet.utils;
 
 import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.api.common.typeinfo.BasicArrayTypeInfo;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.formats.parquet.generated.ArrayItem;
@@ -32,10 +36,14 @@ import org.apache.flink.types.Row;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.IndexedRecord;
 import org.apache.avro.specific.SpecificRecord;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.avro.AvroParquetWriter;
+import org.apache.parquet.avro.AvroSchemaConverter;
 import org.apache.parquet.hadoop.ParquetWriter;
+import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runners.Parameterized;
 import org.mockito.Mockito;
 
 import java.io.File;
@@ -43,6 +51,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,15 +61,84 @@ import java.util.UUID;
  * Utilities for testing schema conversion and test parquet file creation.
  */
 public class TestUtil {
+	public static final Configuration OLD_BEHAVIOR_CONF = new Configuration();
+	public static final Configuration NEW_BEHAVIOR_CONF = new Configuration();
+	private static AvroSchemaConverter schemaConverter;
+	private static AvroSchemaConverter legacySchemaConverter;
+	protected boolean useLegacyMode;
+
+	private static final TypeInformation<Row[]> nestedArray = Types.OBJECT_ARRAY(Types.ROW_NAMED(
+		new String[] {"type", "value"}, BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.LONG_TYPE_INFO));
+
+	@SuppressWarnings("unchecked")
+	private static final TypeInformation<Map<String, Row>> nestedMap = Types.MAP(BasicTypeInfo.STRING_TYPE_INFO,
+		Types.ROW_NAMED(new String[] {"type", "value"},
+			BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.STRING_TYPE_INFO));
+
 	@ClassRule
 	public static TemporaryFolder tempRoot = new TemporaryFolder();
 	public static final Schema NESTED_SCHEMA = getTestSchema("nested.avsc");
 	public static final Schema SIMPLE_SCHEMA = getTestSchema("simple.avsc");
 
-	public static Path createTempParquetFile(File folder, Schema schema, List<IndexedRecord> records) throws IOException {
+	public static final TypeInformation<Row> SIMPLE_ROW_TYPE = Types.ROW_NAMED(new String[] {"foo", "bar", "arr"},
+		BasicTypeInfo.LONG_TYPE_INFO, BasicTypeInfo.STRING_TYPE_INFO, BasicArrayTypeInfo.LONG_ARRAY_TYPE_INFO);
+
+	@SuppressWarnings("unchecked")
+	public static final TypeInformation<Row> NESTED_ROW_TYPE = Types.ROW_NAMED(
+		new String[] {"foo", "spamMap", "bar", "arr", "strArray", "nestedMap", "nestedArray"},
+		BasicTypeInfo.LONG_TYPE_INFO,
+		Types.MAP(BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.STRING_TYPE_INFO),
+		Types.ROW_NAMED(new String[] {"spam"}, BasicTypeInfo.LONG_TYPE_INFO),
+		BasicArrayTypeInfo.LONG_ARRAY_TYPE_INFO,
+		BasicArrayTypeInfo.STRING_ARRAY_TYPE_INFO,
+		nestedMap,
+		nestedArray);
+
+	@BeforeClass
+	public static void setupNewBehaviorConfiguration() {
+		OLD_BEHAVIOR_CONF.setBoolean(
+			"parquet.avro.write-old-list-structure", true);
+		NEW_BEHAVIOR_CONF.setBoolean(
+			"parquet.avro.write-old-list-structure", false);
+		schemaConverter = new AvroSchemaConverter(NEW_BEHAVIOR_CONF);
+		legacySchemaConverter = new AvroSchemaConverter(OLD_BEHAVIOR_CONF);
+	}
+
+	public TestUtil(boolean useLegacyMode) {
+		this.useLegacyMode = useLegacyMode;
+	}
+
+	@Parameterized.Parameters
+	public static Collection<Boolean> primeNumbers() {
+		return Arrays.asList(new Boolean[] {true, false});
+	}
+
+	protected AvroSchemaConverter getSchemaConverter() {
+		if (useLegacyMode) {
+			return legacySchemaConverter;
+		}
+
+		return schemaConverter;
+	}
+
+	protected Configuration getConfiguration() {
+		if (useLegacyMode) {
+			return OLD_BEHAVIOR_CONF;
+		}
+
+		return NEW_BEHAVIOR_CONF;
+	}
+
+	public static Path createTempParquetFile(
+		File folder,
+		Schema schema,
+		List<IndexedRecord> records,
+		Configuration configuration) throws IOException {
 		Path path = new Path(folder.getPath(), UUID.randomUUID().toString());
 		ParquetWriter<IndexedRecord> writer = AvroParquetWriter.<IndexedRecord>builder(
-			new org.apache.hadoop.fs.Path(path.toUri())).withSchema(schema).withRowGroupSize(10).build();
+			new org.apache.hadoop.fs.Path(path.toUri()))
+			.withConf(configuration)
+			.withSchema(schema).withRowGroupSize(10).build();
 
 		for (IndexedRecord record : records) {
 			writer.write(record);
@@ -96,7 +174,7 @@ public class TestUtil {
 
 		final ArrayItem arrayItem = ArrayItem.newBuilder()
 			.setType("color")
-			.setValue("yellow").build();
+			.setValue(1L).build();
 
 		final MapItem mapItem = MapItem.newBuilder()
 			.setType("map")
@@ -129,7 +207,7 @@ public class TestUtil {
 
 		final Row arrayItemRow = new Row(2);
 		arrayItemRow.setField(0, "color");
-		arrayItemRow.setField(1, "yellow");
+		arrayItemRow.setField(1, 1L);
 
 		final Row mapItemRow = new Row(2);
 		mapItemRow.setField(0, "map");
@@ -154,6 +232,49 @@ public class TestUtil {
 		return t;
 	}
 
+	/**
+	 * Create a list of NestedRecord with the NESTED_SCHEMA.
+	 */
+	public static List<IndexedRecord> createRecordList(long numberOfRows) {
+		List<IndexedRecord> records = new ArrayList<>(0);
+		for (long i = 0; i < numberOfRows; i++) {
+			final Bar bar = Bar.newBuilder()
+				.setSpam(i).build();
+
+			final ArrayItem arrayItem = ArrayItem.newBuilder()
+				.setType("color")
+				.setValue(i).build();
+
+			final MapItem mapItem = MapItem.newBuilder()
+				.setType("map")
+				.setValue("hashMap").build();
+
+			List<ArrayItem> nestedArray = new ArrayList<>();
+			nestedArray.add(arrayItem);
+
+			Map<CharSequence, MapItem> nestedMap = new HashMap<>();
+			nestedMap.put("mapItem", mapItem);
+
+			List<Long> longArray = new ArrayList<>();
+			longArray.add(i);
+
+			List<CharSequence> stringArray = new ArrayList<>();
+			stringArray.add("String");
+
+			final NestedRecord nestedRecord = NestedRecord.newBuilder()
+				.setFoo(1L)
+				.setBar(bar)
+				.setNestedArray(nestedArray)
+				.setStrArray(stringArray)
+				.setNestedMap(nestedMap)
+				.setArr(longArray).build();
+
+			records.add(nestedRecord);
+		}
+
+		return records;
+	}
+
 	public static RuntimeContext getMockRuntimeContext() {
 		RuntimeContext mockContext = Mockito.mock(RuntimeContext.class);
 		Mockito.doReturn(UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup())
@@ -161,7 +282,7 @@ public class TestUtil {
 		return mockContext;
 	}
 
-	private static Schema getTestSchema(String schemaName) {
+	public static Schema getTestSchema(String schemaName) {
 		try {
 			InputStream inputStream = TestUtil.class.getClassLoader()
 				.getResourceAsStream("avro/" + schemaName);

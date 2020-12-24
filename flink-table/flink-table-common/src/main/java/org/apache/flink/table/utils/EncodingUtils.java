@@ -50,13 +50,25 @@ public abstract class EncodingUtils {
 		// do not instantiate
 	}
 
+	public static String escapeBackticks(String s) {
+		return s.replace("`", "``");
+	}
+
+	public static String escapeSingleQuotes(String s) {
+		return s.replace("'", "''");
+	}
+
+	public static String escapeIdentifier(String s) {
+		return "`" + escapeBackticks(s) + "`";
+	}
+
 	public static String encodeObjectToString(Serializable obj) {
 		try {
 			final byte[] bytes = InstantiationUtil.serializeObject(obj);
 			return new String(BASE64_ENCODER.encode(bytes), UTF_8);
 		} catch (Exception e) {
 			throw new ValidationException(
-				"Unable to serialize object '" + obj.toString() + "' of class '" + obj.getClass().getName() + "'.");
+				"Unable to serialize object '" + obj.toString() + "' of class '" + obj.getClass().getName() + "'.", e);
 		}
 	}
 
@@ -97,12 +109,16 @@ public abstract class EncodingUtils {
 		return new String(java.util.Base64.getEncoder().encode(bytes), UTF_8);
 	}
 
+	public static byte[] decodeBase64ToBytes(String base64) {
+		return java.util.Base64.getDecoder().decode(base64.getBytes(UTF_8));
+	}
+
 	public static String encodeStringToBase64(String string) {
 		return encodeBytesToBase64(string.getBytes(UTF_8));
 	}
 
 	public static String decodeBase64ToString(String base64) {
-		return new String(java.util.Base64.getDecoder().decode(base64.getBytes(UTF_8)), UTF_8);
+		return new String(decodeBase64ToBytes(base64), UTF_8);
 	}
 
 	public static byte[] md5(String string) {

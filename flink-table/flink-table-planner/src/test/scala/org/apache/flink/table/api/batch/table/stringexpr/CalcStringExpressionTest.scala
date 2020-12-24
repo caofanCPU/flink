@@ -18,16 +18,15 @@
 
 package org.apache.flink.table.api.batch.table.stringexpr
 
-import java.sql.{Date, Time, Timestamp}
-
 import org.apache.flink.api.scala._
 import org.apache.flink.api.scala.util.CollectionDataSets.CustomType
-import org.apache.flink.table.api.Types
 import org.apache.flink.table.api.Types._
-import org.apache.flink.table.api.scala._
-import org.apache.flink.table.expressions.Literal
+import org.apache.flink.table.api.{Types, _}
 import org.apache.flink.table.utils.TableTestBase
+
 import org.junit._
+
+import java.sql.{Date, Time, Timestamp}
 
 class CalcStringExpressionTest extends TableTestBase {
 
@@ -90,7 +89,7 @@ class CalcStringExpressionTest extends TableTestBase {
     val util = batchTestUtil()
     val ds = util.addTable[(Int, Long, String)]("Table3",'a, 'b, 'c)
 
-    val t1 = ds.filter( Literal(false) )
+    val t1 = ds.filter(false)
     val t2 = ds.filter("faLsE")
 
     verifyTableEquals(t1, t2)
@@ -101,7 +100,7 @@ class CalcStringExpressionTest extends TableTestBase {
     val util = batchTestUtil()
     val ds = util.addTable[(Int, Long, String)]("Table3",'a, 'b, 'c)
 
-    val t1 = ds.filter( Literal(true) )
+    val t1 = ds.filter(true)
     val t2 = ds.filter("trUe")
 
     verifyTableEquals(t1, t2)

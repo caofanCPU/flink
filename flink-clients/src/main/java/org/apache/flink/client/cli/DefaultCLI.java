@@ -18,25 +18,31 @@
 
 package org.apache.flink.client.cli;
 
-import org.apache.flink.client.deployment.ClusterSpecification;
-import org.apache.flink.client.deployment.StandaloneClusterDescriptor;
-import org.apache.flink.client.deployment.StandaloneClusterId;
+import org.apache.flink.client.deployment.executors.RemoteExecutor;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.util.FlinkException;
+import org.apache.flink.util.NetUtils;
 
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
-import javax.annotation.Nullable;
+import java.net.InetSocketAddress;
+
+import static org.apache.flink.client.cli.CliFrontend.setJobManagerAddressInConfig;
 
 /**
  * The default CLI which is used for interaction with standalone clusters.
  */
-public class DefaultCLI extends AbstractCustomCommandLine<StandaloneClusterId> {
+public class DefaultCLI extends AbstractCustomCommandLine {
 
-	public DefaultCLI(Configuration configuration) {
-		super(configuration);
-	}
+	public static final String ID = "default";
+
+	private static final Option addressOption = new Option("m", "jobmanager", true,
+		"Address of the JobManager to which to connect. " +
+			"Use this flag to connect to a different JobManager than the one specified in the configuration. " +
+			"Attention: This option is respected only if the high-availability configuration is NONE.");
 
 	@Override
 	public boolean isActive(CommandLine commandLine) {
@@ -45,31 +51,30 @@ public class DefaultCLI extends AbstractCustomCommandLine<StandaloneClusterId> {
 	}
 
 	@Override
+	public Configuration toConfiguration(CommandLine commandLine) throws FlinkException {
+
+		final Configuration resultingConfiguration = super.toConfiguration(commandLine);
+		if (commandLine.hasOption(addressOption.getOpt())) {
+			String addressWithPort = commandLine.getOptionValue(addressOption.getOpt());
+			InetSocketAddress jobManagerAddress = NetUtils.parseHostPortAddress(addressWithPort);
+			setJobManagerAddressInConfig(resultingConfiguration, jobManagerAddress);
+		}
+		resultingConfiguration.setString(DeploymentOptions.TARGET, RemoteExecutor.NAME);
+
+		DynamicPropertiesUtil.encodeDynamicProperties(commandLine, resultingConfiguration);
+
+		return resultingConfiguration;
+	}
+
+	@Override
 	public String getId() {
-		return "default";
+		return ID;
 	}
 
 	@Override
 	public void addGeneralOptions(Options baseOptions) {
 		super.addGeneralOptions(baseOptions);
-	}
-
-	@Override
-	public StandaloneClusterDescriptor createClusterDescriptor(
-			CommandLine commandLine) throws FlinkException {
-		final Configuration effectiveConfiguration = applyCommandLineOptionsToConfiguration(commandLine);
-
-		return new StandaloneClusterDescriptor(effectiveConfiguration);
-	}
-
-	@Override
-	@Nullable
-	public StandaloneClusterId getClusterId(CommandLine commandLine) {
-		return StandaloneClusterId.getInstance();
-	}
-
-	@Override
-	public ClusterSpecification getClusterSpecification(CommandLine commandLine) {
-		return new ClusterSpecification.ClusterSpecificationBuilder().createClusterSpecification();
+		baseOptions.addOption(addressOption);
+		baseOptions.addOption(DynamicPropertiesUtil.DYNAMIC_PROPERTIES);
 	}
 }

@@ -18,6 +18,7 @@
 
 package org.apache.flink.streaming.api.operators;
 
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeutils.CompositeTypeSerializerConfigSnapshot;
 import org.apache.flink.api.common.typeutils.CompositeTypeSerializerUtil;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -39,6 +40,7 @@ import java.util.Objects;
  * @param <K> type of the timer key.
  * @param <N> type of the timer namespace.
  */
+@Internal
 public class TimerSerializer<K, N> extends TypeSerializer<TimerHeapInternalTimer<K, N>> {
 
 	private static final long serialVersionUID = 1L;
@@ -60,7 +62,7 @@ public class TimerSerializer<K, N> extends TypeSerializer<TimerHeapInternalTimer
 	/** True iff the serialized type (and composite objects) are immutable. */
 	private final boolean immutableType;
 
-	TimerSerializer(
+	public TimerSerializer(
 		@Nonnull TypeSerializer<K> keySerializer,
 		@Nonnull TypeSerializer<N> namespaceSerializer) {
 		this(
@@ -215,7 +217,7 @@ public class TimerSerializer<K, N> extends TypeSerializer<TimerHeapInternalTimer
 	}
 
 	/**
-	 * Snaphot of a {@link TimerSerializer}.
+	 * Snapshot of a {@link TimerSerializer}.
 	 *
 	 * @param <K> type of key.
 	 * @param <N> type of namespace.

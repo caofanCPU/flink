@@ -18,10 +18,13 @@
 
 package org.apache.flink.table.runtime.functions;
 
-import org.apache.flink.table.dataformat.BinaryString;
-import org.apache.flink.table.dataformat.Decimal;
+import org.apache.flink.table.data.DecimalData;
+import org.apache.flink.table.data.DecimalDataUtils;
+import org.apache.flink.table.data.binary.BinaryStringData;
+import org.apache.flink.table.data.binary.BinaryStringDataUtil;
 import org.apache.flink.table.runtime.util.JsonUtils;
 import org.apache.flink.table.utils.EncodingUtils;
+import org.apache.flink.table.utils.ThreadLocalCache;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -43,6 +46,9 @@ import java.util.UUID;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static org.apache.flink.table.data.DecimalDataUtils.castFrom;
+import static org.apache.flink.table.data.DecimalDataUtils.doubleValue;
 
 /**
  * Built-in scalar runtime functions.
@@ -78,87 +84,87 @@ public class SqlFunctionUtils {
 
 	private static final Map<String, String> EMPTY_MAP = new HashMap<>(0);
 
-	public static double exp(Decimal d) {
-		return Math.exp(d.doubleValue());
+	public static double exp(DecimalData d) {
+		return Math.exp(doubleValue(d));
 	}
 
-	public static double power(double base, Decimal exponent) {
-		return Math.pow(base, exponent.doubleValue());
+	public static double power(double base, DecimalData exponent) {
+		return Math.pow(base, doubleValue(exponent));
 	}
 
-	public static double power(Decimal base, Decimal exponent) {
-		return Math.pow(base.doubleValue(), exponent.doubleValue());
+	public static double power(DecimalData base, DecimalData exponent) {
+		return Math.pow(doubleValue(base), doubleValue(exponent));
 	}
 
-	public static double power(Decimal base, double exponent) {
-		return Math.pow(base.doubleValue(), exponent);
+	public static double power(DecimalData base, double exponent) {
+		return Math.pow(doubleValue(base), exponent);
 	}
 
-	public static double cosh(Decimal x) {
-		return Math.cosh(x.doubleValue());
+	public static double cosh(DecimalData x) {
+		return Math.cosh(doubleValue(x));
 	}
 
-	public static double acos(Decimal a) {
-		return Math.acos(a.doubleValue());
+	public static double acos(DecimalData a) {
+		return Math.acos(doubleValue(a));
 	}
 
-	public static double asin(Decimal a) {
-		return Math.asin(a.doubleValue());
+	public static double asin(DecimalData a) {
+		return Math.asin(doubleValue(a));
 	}
 
-	public static double atan(Decimal a) {
-		return Math.atan(a.doubleValue());
+	public static double atan(DecimalData a) {
+		return Math.atan(doubleValue(a));
 	}
 
-	public static double atan2(Decimal y, Decimal x) {
-		return Math.atan2(y.doubleValue(), x.doubleValue());
+	public static double atan2(DecimalData y, DecimalData x) {
+		return Math.atan2(doubleValue(y), doubleValue(x));
 	}
 
-	public static double sin(Decimal a) {
-		return Math.sin(a.doubleValue());
+	public static double sin(DecimalData a) {
+		return Math.sin(doubleValue(a));
 	}
 
-	public static double sinh(Decimal a) {
-		return Math.sinh(a.doubleValue());
+	public static double sinh(DecimalData a) {
+		return Math.sinh(doubleValue(a));
 	}
 
-	public static double cos(Decimal a) {
-		return Math.cos(a.doubleValue());
+	public static double cos(DecimalData a) {
+		return Math.cos(doubleValue(a));
 	}
 
-	public static double tan(Decimal a) {
-		return Math.tan(a.doubleValue());
+	public static double tan(DecimalData a) {
+		return Math.tan(doubleValue(a));
 	}
 
 	/**
 	 * Calculates the hyperbolic tangent of a big decimal number.
 	 */
-	public static double tanh(Decimal a) {
-		return Math.tanh(a.doubleValue());
+	public static double tanh(DecimalData a) {
+		return Math.tanh(doubleValue(a));
 	}
 
-	public static double cot(Decimal a) {
-		return 1.0d / Math.tan(a.doubleValue());
+	public static double cot(DecimalData a) {
+		return 1.0d / Math.tan(doubleValue(a));
 	}
 
-	public static double degrees(Decimal angrad) {
-		return Math.toDegrees(angrad.doubleValue());
+	public static double degrees(DecimalData angrad) {
+		return Math.toDegrees(doubleValue(angrad));
 	}
 
-	public static double radians(Decimal angdeg) {
-		return Math.toRadians(angdeg.doubleValue());
+	public static double radians(DecimalData angdeg) {
+		return Math.toRadians(doubleValue(angdeg));
 	}
 
-	public static Decimal abs(Decimal a) {
-		return a.abs();
+	public static DecimalData abs(DecimalData a) {
+		return DecimalDataUtils.abs(a);
 	}
 
-	public static Decimal floor(Decimal a) {
-		return a.floor();
+	public static DecimalData floor(DecimalData a) {
+		return DecimalDataUtils.floor(a);
 	}
 
-	public static Decimal ceil(Decimal a) {
-		return a.ceil();
+	public static DecimalData ceil(DecimalData a) {
+		return DecimalDataUtils.ceil(a);
 	}
 
 	// -------------------------- natural logarithm ------------------------
@@ -170,8 +176,8 @@ public class SqlFunctionUtils {
 		return Math.log(x);
 	}
 
-	public static double log(Decimal x) {
-		return Math.log(x.doubleValue());
+	public static double log(DecimalData x) {
+		return Math.log(doubleValue(x));
 	}
 
 	/**
@@ -181,16 +187,16 @@ public class SqlFunctionUtils {
 		return Math.log(x) / Math.log(base);
 	}
 
-	public static double log(double base, Decimal x) {
-		return log(base, x.doubleValue());
+	public static double log(double base, DecimalData x) {
+		return log(base, doubleValue(x));
 	}
 
-	public static double log(Decimal base, double x) {
-		return log(base.doubleValue(), x);
+	public static double log(DecimalData base, double x) {
+		return log(doubleValue(base), x);
 	}
 
-	public static double log(Decimal base, Decimal x) {
-		return log(base.doubleValue(), x.doubleValue());
+	public static double log(DecimalData base, DecimalData x) {
+		return log(doubleValue(base), doubleValue(x));
 	}
 
 	/**
@@ -200,16 +206,16 @@ public class SqlFunctionUtils {
 		return Math.log(x) / Math.log(2);
 	}
 
-	public static double log2(Decimal x) {
-		return log2(x.doubleValue());
+	public static double log2(DecimalData x) {
+		return log2(doubleValue(x));
 	}
 
 	public static double log10(double x) {
 		return Math.log10(x);
 	}
 
-	public static double log10(Decimal x) {
-		return log10(x.doubleValue());
+	public static double log10(DecimalData x) {
+		return log10(doubleValue(x));
 	}
 
 	// -------------------------- string functions ------------------------
@@ -340,22 +346,15 @@ public class SqlFunctionUtils {
 	}
 
 	/**
-	 * Returns a string resulting from replacing all substrings that match the regular
-	 * expression with replacement.
+	 * Returns a string resulting from replacing all substrings
+	 * that match the regular expression with replacement.
 	 */
 	public static String regexpReplace(String str, String regex, String replacement) {
-		if (regex.isEmpty()) {
-			return str;
+		if (str == null || regex == null || replacement == null) {
+			return null;
 		}
 		try {
-			// we should use StringBuffer here because Matcher only accept it
-			StringBuffer sb = new StringBuffer();
-			Matcher m = REGEXP_PATTERN_CACHE.get(regex).matcher(str);
-			while (m.find()) {
-				m.appendReplacement(sb, replacement);
-			}
-			m.appendTail(sb);
-			return sb.toString();
+			return str.replaceAll(regex, Matcher.quoteReplacement(replacement));
 		} catch (Exception e) {
 			LOG.error(
 				String.format("Exception in regexpReplace('%s', '%s', '%s')", str, regex, replacement),
@@ -366,27 +365,26 @@ public class SqlFunctionUtils {
 	}
 
 	/**
-	 * Returns a string extracted with a specified regular expression and a regex
-	 * match group index.
+	 * Returns a string extracted with a specified regular expression and a regex match group index.
 	 */
 	public static String regexpExtract(String str, String regex, int extractIndex) {
-		if (extractIndex < 0) {
+		if (str == null || regex == null) {
 			return null;
 		}
 
 		try {
-			Matcher m = REGEXP_PATTERN_CACHE.get(regex).matcher(str);
+			Matcher m = Pattern.compile(regex).matcher(str);
 			if (m.find()) {
 				MatchResult mr = m.toMatchResult();
 				return mr.group(extractIndex);
 			}
-			return null;
 		} catch (Exception e) {
 			LOG.error(
 				String.format("Exception in regexpExtract('%s', '%s', '%d')", str, regex, extractIndex),
 				e);
-			return null;
 		}
+
+		return null;
 	}
 
 	public static String regexpExtract(String str, String regex, long extractIndex) {
@@ -412,21 +410,24 @@ public class SqlFunctionUtils {
 	 * @param keyName name of the key whose value you want return.
 	 * @return target value.
 	 */
-	public static BinaryString keyValue(
-		BinaryString str, BinaryString pairSeparator, BinaryString kvSeparator, BinaryString keyName) {
+	public static BinaryStringData keyValue(
+			BinaryStringData str,
+			BinaryStringData pairSeparator,
+			BinaryStringData kvSeparator,
+			BinaryStringData keyName) {
 		if (str == null || str.getSizeInBytes() == 0) {
 			return null;
 		}
 		if (pairSeparator != null && pairSeparator.getSizeInBytes() == 1 &&
 			kvSeparator != null && kvSeparator.getSizeInBytes() == 1) {
-			return str.keyValue(pairSeparator.getByte(0), kvSeparator.getByte(0), keyName);
+			return BinaryStringDataUtil.keyValue(str, pairSeparator.byteAt(0), kvSeparator.byteAt(0), keyName);
 		} else {
-			return BinaryString.fromString(
+			return BinaryStringData.fromString(
 				keyValue(
-					BinaryString.safeToString(str),
-					BinaryString.safeToString(pairSeparator),
-					BinaryString.safeToString(kvSeparator),
-					BinaryString.safeToString(keyName)));
+						BinaryStringDataUtil.safeToString(str),
+						BinaryStringDataUtil.safeToString(pairSeparator),
+						BinaryStringDataUtil.safeToString(kvSeparator),
+						BinaryStringDataUtil.safeToString(keyName)));
 		}
 	}
 
@@ -492,7 +493,7 @@ public class SqlFunctionUtils {
 			}
 		}
 		if (byteArray == null) {
-			byteArray = str.getBytes();
+			byteArray = str.getBytes(StandardCharsets.UTF_8);
 		}
 		return byteArray;
 	}
@@ -577,11 +578,11 @@ public class SqlFunctionUtils {
 
 	public static String subString(String str, long start, long len) {
 		if (len < 0) {
-			LOG.error("len of 'substring(str, start, len)' must be >= 0 and Int type, but len = {0}", len);
+			LOG.error("len of 'substring(str, start, len)' must be >= 0 and Int type, but len = {}", len);
 			return null;
 		}
 		if (len > Integer.MAX_VALUE || start > Integer.MAX_VALUE) {
-			LOG.error("len or start of 'substring(str, start, len)' must be Int type, but len = {0}, start = {0}", len, start);
+			LOG.error("len or start of 'substring(str, start, len)' must be Int type, but len = {}, start = {}", len, start);
 			return null;
 		}
 		int length = (int) len;
@@ -649,15 +650,15 @@ public class SqlFunctionUtils {
 		return overlay(s, r, start, r.length());
 	}
 
-	public static int position(BinaryString seek, BinaryString s) {
+	public static int position(BinaryStringData seek, BinaryStringData s) {
 		return position(seek, s, 1);
 	}
 
-	public static int position(BinaryString seek, BinaryString s, int from) {
+	public static int position(BinaryStringData seek, BinaryStringData s, int from) {
 		return s.indexOf(seek, from - 1) + 1;
 	}
 
-	public static int instr(BinaryString str, BinaryString subString, int startPosition, int nthAppearance) {
+	public static int instr(BinaryStringData str, BinaryStringData subString, int startPosition, int nthAppearance) {
 		if (nthAppearance <= 0) {
 			throw new IllegalArgumentException("nthAppearance must be positive!");
 		}
@@ -675,7 +676,11 @@ public class SqlFunctionUtils {
 			}
 			return index;
 		} else {
-			int pos = instr(str.reverse(), subString.reverse(), -startPosition, nthAppearance);
+			int pos = instr(
+					BinaryStringDataUtil.reverse(str),
+					BinaryStringDataUtil.reverse(subString),
+					-startPosition,
+					nthAppearance);
 			if (pos == 0) {
 				return 0;
 			} else {
@@ -784,18 +789,18 @@ public class SqlFunctionUtils {
 		return sround(BigDecimal.valueOf(b0), b1).doubleValue();
 	}
 
-	/** SQL <code>ROUND</code> operator applied to Decimal values. */
-	public static Decimal sround(Decimal b0) {
+	/** SQL <code>ROUND</code> operator applied to DecimalData values. */
+	public static DecimalData sround(DecimalData b0) {
 		return sround(b0, 0);
 	}
 
-	/** SQL <code>ROUND</code> operator applied to Decimal values. */
-	public static Decimal sround(Decimal b0, int b1) {
-		return Decimal.sround(b0, b1);
+	/** SQL <code>ROUND</code> operator applied to DecimalData values. */
+	public static DecimalData sround(DecimalData b0, int b1) {
+		return DecimalDataUtils.sround(b0, b1);
 	}
 
-	public static Decimal sign(Decimal b0) {
-		return Decimal.sign(b0);
+	public static DecimalData sign(DecimalData b0) {
+		return DecimalDataUtils.sign(b0);
 	}
 
 	public static boolean isDecimal(Object obj) {
@@ -1057,16 +1062,20 @@ public class SqlFunctionUtils {
 		return a ^ b;
 	}
 
-	public static String toBase64(BinaryString bs){
-		return toBase64(bs.getBytes());
+	public static String toBase64(BinaryStringData bs){
+		return toBase64(bs.toBytes());
 	}
 
 	public static String toBase64(byte[] bytes){
 		return Base64.getEncoder().encodeToString(bytes);
 	}
 
-	public static byte[] fromBase64(BinaryString bs){
-		return Base64.getDecoder().decode(bs.getBytes());
+	public static BinaryStringData fromBase64(BinaryStringData bs) {
+		return BinaryStringData.fromBytes(Base64.getDecoder().decode(bs.toBytes()));
+	}
+
+	public static BinaryStringData fromBase64(byte[] bytes) {
+		return BinaryStringData.fromBytes(Base64.getDecoder().decode(bytes));
 	}
 
 	public static String uuid(){
@@ -1075,5 +1084,62 @@ public class SqlFunctionUtils {
 
 	public static String uuid(byte[] b){
 		return UUID.nameUUIDFromBytes(b).toString();
+	}
+
+	/** SQL <code>TRUNCATE</code> operator applied to BigDecimal values. */
+	public static DecimalData struncate(DecimalData b0) {
+		return struncate(b0, 0);
+	}
+
+	public static DecimalData struncate(DecimalData b0, int b1) {
+		if (b1 >= b0.scale()) {
+			return b0;
+		}
+
+		BigDecimal b2 = b0.toBigDecimal().movePointRight(b1)
+			.setScale(0, RoundingMode.DOWN).movePointLeft(b1);
+		int p = b0.precision();
+		int s = b0.scale();
+
+		if (b1 < 0) {
+			return DecimalData.fromBigDecimal(b2, Math.min(38, 1 + p - s), 0);
+		} else {
+			return DecimalData.fromBigDecimal(b2, 1 + p - s + b1, b1);
+		}
+	}
+
+	/** SQL <code>TRUNCATE</code> operator applied to double values. */
+	public static float struncate(float b0) {
+		return struncate(b0, 0);
+	}
+
+	public static float struncate(float b0, int b1) {
+		return (float) doubleValue(struncate(castFrom((double) b0, 38, 18), b1));
+	}
+
+	/**
+	 * Compares two byte arrays in lexicographical order.
+	 *
+	 * <p>The result is
+	 * positive if {@code array1} is great than {@code array2},
+	 * negative if {@code array1} is less than {@code array2} and
+	 * 0 if {@code array1} is equal to {@code array2}.
+	 *
+	 * <p>Note: Currently, this is used in {@code ScalarOperatorGens}
+	 * for comparing two fields of binary or varbinary type.
+	 *
+	 * @param array1 byte array to compare.
+	 * @param array2 byte array to compare.
+	 * @return an Integer indicating which one is bigger
+	 */
+	public static int byteArrayCompare(byte[] array1, byte[] array2) {
+		for (int i = 0, j = 0; i < array1.length && j < array2.length; i++, j++) {
+			int a = (array1[i] & 0xff);
+			int b = (array2[j] & 0xff);
+			if (a != b) {
+				return a - b;
+			}
+		}
+		return array1.length - array2.length;
 	}
 }

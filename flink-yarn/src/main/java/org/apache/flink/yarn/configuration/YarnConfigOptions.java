@@ -19,7 +19,11 @@
 package org.apache.flink.yarn.configuration;
 
 import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.ExternalResourceOptions;
+import org.apache.flink.configuration.SecurityOptions;
 import org.apache.flink.configuration.description.Description;
+
+import java.util.List;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
 import static org.apache.flink.configuration.description.LinkElement.link;
@@ -34,32 +38,25 @@ import static org.apache.flink.configuration.description.TextElement.text;
 public class YarnConfigOptions {
 
 	/**
-	 * The hostname or address where the application master RPC system is listening.
+	 * The vcores used by YARN application master.
 	 */
-	public static final ConfigOption<String> APP_MASTER_RPC_ADDRESS =
-			key("yarn.appmaster.rpc.address")
-			.noDefaultValue()
-			.withDescription("The hostname or address where the application master RPC system is listening.");
-
-	/**
-	 * The port where the application master RPC system is listening.
-	 */
-	public static final ConfigOption<Integer> APP_MASTER_RPC_PORT =
-			key("yarn.appmaster.rpc.port")
-			.defaultValue(-1)
-			.withDescription("The port where the application master RPC system is listening.");
+	public static final ConfigOption<Integer> APP_MASTER_VCORES =
+		key("yarn.appmaster.vcores")
+		.defaultValue(1)
+		.withDescription("The number of virtual cores (vcores) used by YARN application master.");
 
 	/**
 	 * Defines whether user-jars are included in the system class path for per-job-clusters as well as their positioning
 	 * in the path. They can be positioned at the beginning ("FIRST"), at the end ("LAST"), or be positioned based on
-	 * their name ("ORDER").
+	 * their name ("ORDER"). "DISABLED" means the user-jars are excluded from the system class path.
 	 */
 	public static final ConfigOption<String> CLASSPATH_INCLUDE_USER_JAR =
 		key("yarn.per-job-cluster.include-user-jar")
 			.defaultValue("ORDER")
 			.withDescription("Defines whether user-jars are included in the system class path for per-job-clusters as" +
 				" well as their positioning in the path. They can be positioned at the beginning (\"FIRST\"), at the" +
-				" end (\"LAST\"), or be positioned based on their name (\"ORDER\").");
+				" end (\"LAST\"), or be positioned based on their name (\"ORDER\"). \"DISABLED\" means the user-jars" +
+				" are excluded from the system class path.");
 
 	/**
 	 * The vcores exposed by YARN.
@@ -76,18 +73,6 @@ public class YarnConfigOptions {
 				.build());
 
 	/**
-	 * The maximum number of failed YARN containers before entirely stopping
-	 * the YARN session / job on YARN.
-	 * By default, we take the number of initially requested containers.
-	 *
-	 * <p>Note: This option returns a String since Integer options must have a static default value.
-	 */
-	public static final ConfigOption<String> MAX_FAILED_CONTAINERS =
-		key("yarn.maximum-failed-containers")
-		.noDefaultValue()
-		.withDescription("Maximum number of containers the system is going to reallocate in case of a failure.");
-
-	/**
 	 * Set the number of retries for failed YARN ApplicationMasters/JobManagers in high
 	 * availability mode. This value is usually limited by YARN.
 	 * By default, it's 1 in the standalone case and 2 in the high availability case.
@@ -96,10 +81,16 @@ public class YarnConfigOptions {
 	 */
 	public static final ConfigOption<String> APPLICATION_ATTEMPTS =
 		key("yarn.application-attempts")
-		.noDefaultValue()
-		.withDescription("Number of ApplicationMaster restarts. Note that that the entire Flink cluster will restart" +
-			" and the YARN Client will loose the connection. Also, the JobManager address will change and you’ll need" +
-			" to set the JM host:port manually. It is recommended to leave this option at 1.");
+			.stringType()
+			.noDefaultValue()
+			.withDescription(
+				Description.builder()
+					.text("Number of ApplicationMaster restarts. By default, the value will be set to 1. " +
+						"If high availability is enabled, then the default value will be 2. " +
+						"The restart number is also limited by YARN (configured via %s). " +
+						"Note that that the entire Flink cluster will restart and the YARN Client will lose the connection.",
+						link("https://hadoop.apache.org/docs/r2.4.1/hadoop-yarn/hadoop-yarn-common/yarn-default.xml", "yarn.resourcemanager.am.max-attempts"))
+					.build());
 
 	/**
 	 * The config parameter defining the attemptFailuresValidityInterval of Yarn application.
@@ -173,12 +164,159 @@ public class YarnConfigOptions {
 			" allowed ports.");
 
 	/**
+	 * A non-negative integer indicating the priority for submitting a Flink YARN application. It will only take effect
+	 * if YARN priority scheduling setting is enabled. Larger integer corresponds with higher priority. If priority is
+	 * negative or set to '-1'(default), Flink will unset yarn priority setting and use cluster default priority.
+	 *
+	 * @see <a href="https://hadoop.apache.org/docs/r2.8.5/hadoop-yarn/hadoop-yarn-site/CapacityScheduler.html">YARN Capacity Scheduling Doc</a>
+	 */
+	public static final ConfigOption<Integer> APPLICATION_PRIORITY =
+		key("yarn.application.priority")
+			.defaultValue(-1)
+			.withDescription("A non-negative integer indicating the priority for submitting a Flink YARN application. It" +
+				" will only take effect if YARN priority scheduling setting is enabled. Larger integer corresponds" +
+				" with higher priority. If priority is negative or set to '-1'(default), Flink will unset yarn priority" +
+				" setting and use cluster default priority. Please refer to YARN's official documentation for specific" +
+				" settings required to enable priority scheduling for the targeted YARN version.");
+
+	/**
+	 * Yarn session client uploads flink jar and user libs to file system (hdfs/s3) as local resource for yarn
+	 * application context. The replication number changes the how many replica of each of these files in hdfs/s3.
+	 * It is useful to accelerate this container bootstrap, when a Flink application needs more than one hundred
+	 * of containers. If it is not configured, Flink will use the default replication value in hadoop configuration.
+	 */
+	public static final ConfigOption<Integer> FILE_REPLICATION =
+		key("yarn.file-replication")
+			.intType()
+			.defaultValue(-1)
+			.withDescription("Number of file replication of each local resource file. If it is not configured, Flink will" +
+				" use the default replication value in hadoop configuration.");
+
+	/**
 	 * A comma-separated list of strings to use as YARN application tags.
 	 */
 	public static final ConfigOption<String> APPLICATION_TAGS =
 		key("yarn.tags")
 		.defaultValue("")
 		.withDescription("A comma-separated list of tags to apply to the Flink YARN application.");
+
+	// ----------------------- YARN CLI OPTIONS ------------------------------------
+
+	public static final ConfigOption<String> STAGING_DIRECTORY =
+		key("yarn.staging-directory")
+			.stringType()
+			.noDefaultValue()
+			.withDescription("Staging directory used to store YARN files while submitting applications. Per default, it uses the home directory of the configured file system.");
+
+	public static final ConfigOption<List<String>> SHIP_FILES =
+			key("yarn.ship-files")
+				.stringType()
+				.asList()
+				.noDefaultValue()
+				.withDeprecatedKeys("yarn.ship-directories")
+				.withDescription("A semicolon-separated list of files and/or directories to be shipped to the YARN cluster.");
+
+	public static final ConfigOption<List<String>> SHIP_ARCHIVES =
+			key("yarn.ship-archives")
+				.stringType()
+				.asList()
+				.noDefaultValue()
+				.withDescription("A semicolon-separated list of archives to be shipped to the YARN cluster." +
+						" These archives will be un-packed when localizing and they can be any of the following types: " +
+						"\".tar.gz\", \".tar\", \".tgz\", \".dst\", \".jar\", \".zip\".");
+
+	public static final ConfigOption<String> FLINK_DIST_JAR =
+			key("yarn.flink-dist-jar")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("The location of the Flink dist jar.");
+
+	public static final ConfigOption<String> APPLICATION_ID =
+			key("yarn.application.id")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("The YARN application id of the running yarn cluster." +
+						" This is the YARN cluster where the pipeline is going to be executed.");
+
+	public static final ConfigOption<String> APPLICATION_QUEUE =
+			key("yarn.application.queue")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("The YARN queue on which to put the current pipeline.");
+
+	public static final ConfigOption<String> APPLICATION_NAME =
+			key("yarn.application.name")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("A custom name for your YARN application.");
+
+	public static final ConfigOption<String> APPLICATION_TYPE =
+			key("yarn.application.type")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("A custom type for your YARN application..");
+
+	public static final ConfigOption<String> NODE_LABEL =
+			key("yarn.application.node-label")
+				.stringType()
+				.noDefaultValue()
+				.withDescription("Specify YARN node label for the YARN application.");
+
+	public static final ConfigOption<Boolean> SHIP_LOCAL_KEYTAB =
+			key("yarn.security.kerberos.ship-local-keytab")
+					.booleanType()
+					.defaultValue(true)
+					.withDescription(
+							"When this is true Flink will ship the keytab file configured via " +
+									SecurityOptions.KERBEROS_LOGIN_KEYTAB.key() +
+									" as a localized YARN resource.");
+
+	public static final ConfigOption<String> LOCALIZED_KEYTAB_PATH =
+			key("yarn.security.kerberos.localized-keytab-path")
+					.stringType()
+					.defaultValue("krb5.keytab")
+					.withDescription(
+							"Local (on NodeManager) path where kerberos keytab file will be" +
+									" localized to. If " + SHIP_LOCAL_KEYTAB.key() + " set to " +
+									"true, Flink willl ship the keytab file as a YARN local " +
+									"resource. In this case, the path is relative to the local " +
+									"resource directory. If set to false, Flink" +
+									" will try to directly locate the keytab from the path itself.");
+
+	public static final ConfigOption<List<String>> PROVIDED_LIB_DIRS =
+		key("yarn.provided.lib.dirs")
+			.stringType()
+			.asList()
+			.noDefaultValue()
+			.withDescription("A semicolon-separated list of provided lib directories. They should be pre-uploaded and " +
+				"world-readable. Flink will use them to exclude the local Flink jars(e.g. flink-dist, lib/, plugins/)" +
+				"uploading to accelerate the job submission process. Also YARN will cache them on the nodes so that " +
+				"they doesn't need to be downloaded every time for each application. An example could be " +
+				"hdfs://$namenode_address/path/of/flink/lib");
+
+	public static final ConfigOption<List<String>> YARN_ACCESS =
+		key("yarn.security.kerberos.additionalFileSystems")
+			.stringType()
+			.asList()
+			.noDefaultValue()
+			.withDescription("A comma-separated list of additional Kerberos-secured Hadoop filesystems Flink is going to access. For example, yarn.security.kerberos.additionalFileSystems=hdfs://namenode2:9002,hdfs://namenode3:9003. The client submitting to YARN needs to have access to these file systems to retrieve the security tokens.");
+
+	/** Defines the configuration key of that external resource in Yarn. This is used as a suffix in an actual config. */
+	public static final String EXTERNAL_RESOURCE_YARN_CONFIG_KEY_SUFFIX = "yarn.config-key";
+
+	/**
+	 * If configured, Flink will add this key to the resource profile of container request to Yarn. The value will be
+	 * set to {@link ExternalResourceOptions#EXTERNAL_RESOURCE_AMOUNT}.
+	 *
+	 * <p>It is intentionally included into user docs while unused.
+	 */
+	@SuppressWarnings("unused")
+	public static final ConfigOption<String> EXTERNAL_RESOURCE_YARN_CONFIG_KEY =
+		key(ExternalResourceOptions.genericKeyWithSuffix(EXTERNAL_RESOURCE_YARN_CONFIG_KEY_SUFFIX))
+			.stringType()
+			.noDefaultValue()
+			.withDescription("If configured, Flink will add this key to the resource profile of container request to Yarn. " +
+				"The value will be set to the value of " + ExternalResourceOptions.EXTERNAL_RESOURCE_AMOUNT.key() + ".");
 
 	// ------------------------------------------------------------------------
 
@@ -187,6 +325,7 @@ public class YarnConfigOptions {
 
 	/** @see YarnConfigOptions#CLASSPATH_INCLUDE_USER_JAR */
 	public enum UserJarInclusion {
+		DISABLED,
 		FIRST,
 		LAST,
 		ORDER

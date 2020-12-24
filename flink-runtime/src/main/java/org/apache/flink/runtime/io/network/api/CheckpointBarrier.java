@@ -113,4 +113,12 @@ public class CheckpointBarrier extends RuntimeEvent {
 	public String toString() {
 		return String.format("CheckpointBarrier %d @ %d Options: %s", id, timestamp, checkpointOptions);
 	}
+
+	public boolean isCheckpoint() {
+		return !checkpointOptions.getCheckpointType().isSavepoint();
+	}
+
+	public CheckpointBarrier asUnaligned() {
+		return checkpointOptions.isUnalignedCheckpoint() ? this : new CheckpointBarrier(getId(), getTimestamp(), getCheckpointOptions().toUnaligned());
+	}
 }
